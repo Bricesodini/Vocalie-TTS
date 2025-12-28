@@ -115,6 +115,8 @@ Gradio démarre sur http://127.0.0.1:7860. Tout tourne localement (pas de cloud 
 - La suggestion apparaît en lecture seule ; **Utiliser la suggestion** remplace votre texte.
 - Avertissement si l’algorithme a dû couper/allonger de façon importante (±20 %).
 - Textbox « Texte interprété » : affiche le script réellement envoyé au TTS (balises de pause retirées).
+- **Long-form (auto-chunk)** : active la génération multi-chunks (utile > 40s). Réglages `Max phrases/chunk` (règle principale) et `Max chars/chunk` (fallback strict).  
+- Accordion « Aperçu des chunks » : affiche le découpage réel (index, phrases, chars, durée estimée, raison du split).
 
 #### Respiration & pauses custom
 Utilisez des balises maison pour gérer les silences sans casser le modèle :
@@ -173,6 +175,7 @@ Chaque action ajoute une ligne horodatée : import réussi/refusé, estimation +
 - Les références absentes lèvent une erreur claire côté UI sans crasher l’app.
 - Les balises `{pause:ms}`, `{breath}`, `{beat}` sont interprétées côté app : le texte nettoyé est envoyé au modèle segment par segment, puis des silences zéro sont insérés pour obtenir un rythme naturel.
 - Prévisualisation Gradio : le fichier est toujours généré dans `./output/...`, puis copié dans le dossier utilisateur (aucun conflit avec les restrictions Gradio).
+- Long-form : découpage “phrase-first” avec priorité `double \n` > fin de phrase forte > limite max phrases > fallback chars. Le fallback chars ne casse jamais une phrase sauf si elle dépasse la limite.
 
 ### Cache Hugging Face
 - Les poids sont mis en cache automatiquement par `huggingface_hub` (par défaut sous `~/.cache/huggingface/`).

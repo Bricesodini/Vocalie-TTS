@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import soundfile as sf
@@ -14,7 +14,14 @@ from chatterbox.tts import ChatterboxTTS
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 
-from text_tools import SpeechSegment, split_text_and_pauses
+from text_tools import (
+    SpeechSegment,
+    chunk_script,
+    ensure_strong_ending,
+    render_clean_text_from_segments,
+    split_text_and_pauses,
+    stitch_segments,
+)
 
 LOGGER = logging.getLogger("chatterbox_tts")
 
@@ -83,33 +90,21 @@ class TTSEngine:
         repetition_penalty: float,
     ) -> np.ndarray:
         sr = self.sample_rate or (self.tts.sr if self.tts else 24000)
-        audio_chunks: List[np.ndarray] = []
 
-        for segment in segments:
-            if segment.kind == "silence":
-                frames = int(sr * (segment.duration_ms / 1000.0))
-                if frames <= 0:
-                    continue
-                audio_chunks.append(np.zeros(frames, dtype=np.float32))
-                continue
-
-            clean = segment.content.strip()
-            if not clean:
-                continue
-            chunk = self._synthesize_text(
-                clean,
+        def _synth(text: str) -> np.ndarray:
+            return self._synthesize_text(
+                text,
                 audio_prompt_path,
                 exaggeration,
                 cfg_weight,
                 temperature,
                 repetition_penalty,
             )
-            audio_chunks.append(chunk)
 
-        if not audio_chunks:
+        audio = stitch_segments(segments, sr, _synth)
+        if audio.size == 0:
             raise ValueError("Aucun segment audio généré.")
-
-        return np.concatenate(audio_chunks)
+        return audio
 
     def generate(
         self,
@@ -145,6 +140,85 @@ class TTSEngine:
         sf.write(out_path, audio, sr)
         LOGGER.info("Saved audio to %s", out_path)
         return out_path, sr
+
+    def generate_longform(
+        self,
+        script: str,
+        audio_prompt_path: Optional[str],
+        *,
+        out_path: str,
+        exaggeration: float = 0.5,
+        cfg_weight: float = 0.6,
+        temperature: float = 0.5,
+        repetition_penalty: float = 1.35,
+        max_chars: int = 380,
+        max_sentences: int = 3,
+    ) -> tuple[str, int, Dict]:
+        if not script.strip():
+            raise ValueError("Le texte est vide.")
+
+        assert self.tts is not None
+        chunks = chunk_script(script, max_chars=max_chars, max_sentences=max_sentences)
+        if not chunks:
+            raise ValueError("Aucun chunk généré.")
+
+        sr = self.sample_rate or self.tts.sr
+        audio_chunks: List[np.ndarray] = []
+        durations: List[float] = []
+        clean_texts: List[str] = []
+        retries: List[bool] = []
+
+        for idx, chunk_info in enumerate(chunks, start=1):
+            chunk_segments = list(chunk_info.segments)
+            ensure_strong_ending(chunk_segments)
+            clean_text = render_clean_text_from_segments(chunk_segments)
+            clean_texts.append(clean_text)
+            audio = self._build_audio_from_segments(
+                chunk_segments,
+                audio_prompt_path,
+                exaggeration,
+                cfg_weight,
+                temperature,
+                repetition_penalty,
+            )
+            duration = len(audio) / sr
+            retried = False
+            if len(clean_text) > 80 and duration < 1.2:
+                retried = True
+                LOGGER.info(
+                    "early-EOS detected (chunk %s) -> retry with cfg+0.05 / temp-0.05",
+                    idx,
+                )
+                base_duration = duration
+                audio = self._build_audio_from_segments(
+                    chunk_segments,
+                    audio_prompt_path,
+                    exaggeration,
+                    min(1.5, cfg_weight + 0.05),
+                    max(0.2, temperature - 0.05),
+                    repetition_penalty,
+                )
+                duration = len(audio) / sr
+                if duration > base_duration:
+                    LOGGER.info("retry success (chunk %s)", idx)
+                else:
+                    LOGGER.info("retry failed (kept first) (chunk %s)", idx)
+            retries.append(retried)
+            durations.append(duration)
+            audio_chunks.append(audio)
+
+        final_audio = np.concatenate(audio_chunks) if audio_chunks else np.zeros(0, dtype=np.float32)
+        out_path = str(Path(out_path).expanduser().resolve())
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        sf.write(out_path, final_audio, sr)
+        meta = {
+            "chunks": len(chunks),
+            "durations": durations,
+            "clean_texts": clean_texts,
+            "retries": retries,
+            "total_duration": len(final_audio) / sr if sr else 0.0,
+        }
+        return out_path, sr, meta
 
 
 __all__ = ["TTSEngine"]

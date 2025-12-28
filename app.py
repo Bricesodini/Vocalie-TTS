@@ -29,7 +29,15 @@ from state_manager import (
     save_preset,
     save_state,
 )
-from text_tools import adjust_text_to_duration, render_clean_text
+from text_tools import (
+    DEFAULT_MAX_CHARS_PER_CHUNK,
+    DEFAULT_MAX_PHRASES_PER_CHUNK,
+    FINAL_MERGE_EST_SECONDS,
+    adjust_text_to_duration,
+    chunk_script,
+    render_clean_text,
+    render_clean_text_from_segments,
+)
 from tts_engine import TTSEngine
 
 
@@ -108,6 +116,12 @@ def append_log(message: str, previous: str | None) -> str:
     return new_line
 
 
+def append_ui_log(message: str, previous: str | None, verbose: bool = False, enabled: bool = True) -> str:
+    if verbose and not enabled:
+        return previous or ""
+    return append_log(message, previous)
+
+
 def refresh_dropdown(current: str | None) -> gr.Dropdown:
     refs = list_refs()
     value = current if current in refs else (refs[0] if refs else None)
@@ -134,7 +148,7 @@ def handle_adjust(text: str, target_seconds: float | None, log_text: str | None)
         info += f" / cible {result.target_duration:.1f}s"
     if result.warning:
         info += f"\n⚠️ {result.warning}"
-    log_text = append_log("Suggestion de durée calculée.", log_text)
+    log_text = append_ui_log("Suggestion de durée calculée.", log_text)
     return result.text, info, log_text
 
 
@@ -151,7 +165,7 @@ def handle_load_preset(
     preset_name: str | None,
     log_text: str | None,
 ):
-    outputs = [gr.update() for _ in range(9)]
+    outputs = [gr.update() for _ in range(13)]
     name_update = gr.update()
     if not preset_name:
         log_text = append_log("Sélectionnez un preset à charger.", log_text)
@@ -172,6 +186,10 @@ def handle_load_preset(
         gr.update(value=data.get("out_dir") or str(DEFAULT_OUTPUT_DIR)),
         gr.update(value=data.get("user_filename", "")),
         gr.update(value=bool(data.get("add_timestamp", True))),
+        gr.update(value=bool(data.get("long_form", False))),
+        gr.update(value=int(data.get("max_chars", DEFAULT_MAX_CHARS_PER_CHUNK))),
+        gr.update(value=int(data.get("max_sentences", DEFAULT_MAX_PHRASES_PER_CHUNK))),
+        gr.update(value=bool(data.get("verbose_logs", False))),
         gr.update(value=_coerce_float(data.get("exaggeration"), 0.5)),
         gr.update(value=_coerce_float(data.get("cfg_weight"), 0.6)),
         gr.update(value=_coerce_float(data.get("temperature"), 0.5)),
@@ -190,6 +208,10 @@ def handle_save_preset(
     out_dir: str | None,
     user_filename: str | None,
     add_timestamp: bool,
+    long_form: bool,
+    max_chars: int,
+    max_sentences: int,
+    verbose_logs: bool,
     exaggeration: float,
     cfg_weight: float,
     temperature: float,
@@ -205,6 +227,10 @@ def handle_save_preset(
         "out_dir": out_dir,
         "user_filename": user_filename or "",
         "add_timestamp": bool(add_timestamp),
+        "long_form": bool(long_form),
+        "max_chars": int(max_chars),
+        "max_sentences": int(max_sentences),
+        "verbose_logs": bool(verbose_logs),
         "exaggeration": float(exaggeration),
         "cfg_weight": float(cfg_weight),
         "temperature": float(temperature),
@@ -255,11 +281,20 @@ def handle_choose_output(current_path: str | None, log_text: str | None):
     base = current_path or str(DEFAULT_OUTPUT_DIR)
     chosen = mac_choose_folder(base)
     if not chosen:
-        log_text = append_log("Sélection dossier annulée.", log_text)
+        log_text = append_ui_log("Sélection dossier annulée.", log_text)
         return gr.update(value=current_path), log_text
     persist_state({"last_out_dir": chosen})
-    log_text = append_log(f"Dossier sortie choisi: {chosen}", log_text)
+    log_text = append_ui_log(f"Dossier sortie choisi: {chosen}", log_text)
     return gr.update(value=chosen), log_text
+
+
+def handle_reset_chunk_defaults(log_text: str | None):
+    log_text = append_ui_log("Reset chunking defaults.", log_text)
+    return (
+        gr.update(value=DEFAULT_MAX_CHARS_PER_CHUNK),
+        gr.update(value=DEFAULT_MAX_PHRASES_PER_CHUNK),
+        log_text,
+    )
 
 
 def handle_generate(
@@ -268,6 +303,10 @@ def handle_generate(
     out_dir: str | None,
     user_filename: str | None,
     add_timestamp: bool,
+    long_form: bool,
+    max_chars: int,
+    max_sentences: int,
+    verbose_logs: bool,
     exaggeration: float,
     cfg_weight: float,
     temperature: float,
@@ -275,17 +314,17 @@ def handle_generate(
     log_text: str | None,
 ):
     if not text or not text.strip():
-        return None, "", append_log("Erreur: texte vide.", log_text)
+        return None, "", "", append_log("Erreur: texte vide.", log_text)
 
-    log_text = append_log("Initialisation de la génération...", log_text)
+    log_text = append_ui_log("Initialisation de la génération...", log_text)
 
     audio_prompt = None
     if ref_name:
         try:
             audio_prompt = resolve_ref_path(ref_name)
         except FileNotFoundError:
-            log_text = append_log(f"Référence introuvable: {ref_name}", log_text)
-            return None, "", log_text
+            log_text = append_ui_log(f"Référence introuvable: {ref_name}", log_text)
+            return None, "", "", log_text
 
     output_dir = ensure_output_dir(out_dir)
     timestamp = dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -299,24 +338,81 @@ def handle_generate(
     preview_path, user_path = prepare_output_paths(SAFE_PREVIEW_DIR, output_dir, filename)
     clean_preview = render_clean_text(text)
     if clean_preview:
-        log_text = append_log("Texte interprété prêt.", log_text)
+        log_text = append_ui_log("Texte interprété prêt.", log_text)
+
+        chunk_preview_text = ""
+        if long_form:
+            chunks = chunk_script(text, max_chars=int(max_chars), max_sentences=int(max_sentences))
+            lines = []
+            for idx, chunk_info in enumerate(chunks, start=1):
+                chunk_text = render_clean_text_from_segments(chunk_info.segments)
+                oversize_flag = " oversize_sentence=True" if chunk_info.oversize_sentence else ""
+                lines.append(
+                    f"[{idx}] phrases={chunk_info.sentence_count} "
+                    f"chars={chunk_info.char_count} "
+                    f"est={chunk_info.estimated_duration:.1f}s "
+                    f"reason={chunk_info.reason}{oversize_flag}\n{chunk_text}"
+                )
+            if chunk_info.reason and chunk_info.reason != "end":
+                log_text = append_ui_log(
+                    f"Split reason: {chunk_info.reason}", log_text, verbose=True, enabled=verbose_logs
+                )
+        chunk_preview_text = "\n\n".join(lines)
+        log_text = append_ui_log(
+            "Split reason: phrase-first", log_text, verbose=True, enabled=verbose_logs
+        )
+        log_text = append_ui_log(
+            f"Chunks: {len(chunks)}", log_text, verbose=False, enabled=True
+        )
 
     try:
         engine = get_engine()
         log_text = append_log("Synthèse en cours...", log_text)
-        final_path, _ = engine.generate(
-            text=text,
-            audio_prompt_path=audio_prompt,
-            exaggeration=exaggeration,
-            cfg_weight=cfg_weight,
-            temperature=temperature,
-            repetition_penalty=repetition_penalty,
-            out_path=preview_path,
-        )
+        if long_form:
+            final_path, _, meta = engine.generate_longform(
+                script=text,
+                audio_prompt_path=audio_prompt,
+                out_path=str(preview_path),
+                exaggeration=exaggeration,
+                cfg_weight=cfg_weight,
+                temperature=temperature,
+                repetition_penalty=repetition_penalty,
+                max_chars=int(max_chars),
+                max_sentences=int(max_sentences),
+            )
+            for idx, duration in enumerate(meta.get("durations", []), start=1):
+                retry_flag = meta.get("retries", [])[idx - 1] if meta.get("retries") else False
+                chunk_info = chunks[idx - 1] if idx - 1 < len(chunks) else None
+                reason = chunk_info.reason if chunk_info else "n/a"
+                phrases = chunk_info.sentence_count if chunk_info else 0
+                chars = chunk_info.char_count if chunk_info else 0
+                est = chunk_info.estimated_duration if chunk_info else 0.0
+                retry_note = " retry" if retry_flag else ""
+                log_text = append_ui_log(
+                    f"Chunk {idx}/{meta.get('chunks', len(meta.get('durations', [])))} "
+                    f"reason={reason} phrases={phrases} chars={chars} "
+                    f"est={est:.1f}s measured={duration:.2f}s{retry_note}",
+                    log_text,
+                    verbose=True,
+                    enabled=verbose_logs,
+                )
+            total_duration = meta.get("total_duration")
+            if total_duration is not None:
+                log_text = append_ui_log(f"Durée finale: {total_duration:.2f}s", log_text)
+        else:
+            final_path, _ = engine.generate(
+                text=text,
+                audio_prompt_path=audio_prompt,
+                exaggeration=exaggeration,
+                cfg_weight=cfg_weight,
+                temperature=temperature,
+                repetition_penalty=repetition_penalty,
+                out_path=preview_path,
+            )
     except Exception as exc:
         LOGGER.exception("TTS generation failed")
-        log_text = append_log(f"Erreur TTS: {exc}", log_text)
-        return None, "", log_text
+        log_text = append_ui_log(f"Erreur TTS: {exc}", log_text)
+        return None, "", chunk_preview_text, log_text
 
     user_path_obj = Path(user_path)
     preview_path_obj = Path(final_path)
@@ -324,9 +420,9 @@ def handle_generate(
         try:
             user_path_obj.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(preview_path_obj, user_path_obj)
-            log_text = append_log(f"Copie dossier utilisateur: {user_path_obj}", log_text)
+            log_text = append_ui_log(f"Copie dossier utilisateur: {user_path_obj}", log_text)
         except Exception as exc:
-            log_text = append_log(f"Copie échouée: {exc}", log_text)
+            log_text = append_ui_log(f"Copie échouée: {exc}", log_text)
     persist_state(
         {
             "last_ref": ref_name,
@@ -337,10 +433,14 @@ def handle_generate(
             "last_repetition_penalty": float(repetition_penalty),
             "last_user_filename": user_filename or "",
             "last_add_timestamp": bool(add_timestamp),
+            "last_long_form": bool(long_form),
+            "last_max_chars": int(max_chars),
+            "last_max_sentences": int(max_sentences),
+            "last_verbose_logs": bool(verbose_logs),
         }
     )
-    log_text = append_log(f"Fichier pré-écoute: {preview_path_obj}", log_text)
-    return str(preview_path_obj), str(user_path_obj), log_text
+    log_text = append_ui_log(f"Fichier pré-écoute: {preview_path_obj}", log_text)
+    return str(preview_path_obj), str(user_path_obj), chunk_preview_text, log_text
 
 
 def build_ui() -> gr.Blocks:
@@ -352,6 +452,10 @@ def build_ui() -> gr.Blocks:
     default_out_dir_value = state_data.get("last_out_dir") or str(DEFAULT_OUTPUT_DIR)
     default_user_filename = state_data.get("last_user_filename", "")
     default_add_timestamp = _coerce_bool(state_data.get("last_add_timestamp"), True)
+    default_long_form = _coerce_bool(state_data.get("last_long_form"), False)
+    default_max_chars = int(state_data.get("last_max_chars") or DEFAULT_MAX_CHARS_PER_CHUNK)
+    default_max_sentences = int(state_data.get("last_max_sentences") or DEFAULT_MAX_PHRASES_PER_CHUNK)
+    default_verbose_logs = _coerce_bool(state_data.get("last_verbose_logs"), False)
     default_exaggeration = _coerce_float(state_data.get("last_exaggeration"), 0.5)
     default_cfg = _coerce_float(state_data.get("last_cfg_weight"), 0.6)
     default_temperature = _coerce_float(state_data.get("last_temperature"), 0.5)
@@ -383,12 +487,6 @@ def build_ui() -> gr.Blocks:
         with gr.Group():
             gr.Markdown("## Texte")
             text_input = gr.Textbox(label="Texte", lines=8, placeholder="Collez votre script ici...")
-            clean_text_box = gr.Textbox(
-                label="Texte interprété (envoyé au TTS)",
-                lines=4,
-                interactive=False,
-                placeholder="Le texte sans balises apparaîtra ici...",
-            )
             with gr.Row():
                 target_duration = gr.Number(label="Durée cible (s)", value=None, precision=1)
                 adjust_btn = gr.Button("Ajuster le texte")
@@ -400,6 +498,49 @@ def build_ui() -> gr.Blocks:
                 placeholder="Le texte ajusté apparaîtra ici...",
             )
             adjust_info = gr.Markdown("Durée estimée: --")
+            with gr.Accordion("Voir le texte final", open=False):
+                clean_text_box = gr.Textbox(
+                    label="Texte interprété (envoyé au TTS)",
+                    lines=4,
+                    interactive=False,
+                    placeholder="Le texte sans balises apparaîtra ici...",
+                )
+                gr.Markdown(
+                    "⚠️ La ponctuation finale peut être renforcée à la synthèse, sans modifier cet aperçu."
+                )
+            with gr.Accordion("Long-form / découpage", open=False):
+                with gr.Row():
+                    long_form_toggle = gr.Checkbox(
+                        label="Long-form (auto-chunk)",
+                        value=default_long_form,
+                    )
+                    max_chars_slider = gr.Slider(
+                        220,
+                        600,
+                        value=default_max_chars,
+                        step=10,
+                        label="Max chars/chunk",
+                        info="Utilisé uniquement si aucune coupure naturelle n’est possible.",
+                    )
+                    max_sentences_slider = gr.Slider(
+                        1,
+                        6,
+                        value=default_max_sentences,
+                        step=1,
+                        label="Max phrases/chunk",
+                        info=f"Nombre maximal de phrases par génération. Seuil merge final: {FINAL_MERGE_EST_SECONDS:.1f}s.",
+                    )
+                    reset_chunk_btn = gr.Button("↺", size="sm")
+                    verbose_logs_toggle = gr.Checkbox(
+                        label="Logs détaillés",
+                        value=default_verbose_logs,
+                    )
+                chunk_preview_box = gr.Textbox(
+                    label="Aperçu des chunks",
+                    lines=8,
+                    interactive=False,
+                    placeholder="Aperçu des chunks (mode long-form).",
+                )
 
         with gr.Group():
             gr.Markdown("## Paramètres")
@@ -500,6 +641,11 @@ def build_ui() -> gr.Blocks:
             inputs=[output_dir_box, logs_box],
             outputs=[output_dir_box, logs_box],
         )
+        reset_chunk_btn.click(
+            fn=handle_reset_chunk_defaults,
+            inputs=[logs_box],
+            outputs=[max_chars_slider, max_sentences_slider, logs_box],
+        )
         load_preset_btn.click(
             fn=handle_load_preset,
             inputs=[preset_dropdown, logs_box],
@@ -508,6 +654,10 @@ def build_ui() -> gr.Blocks:
                 output_dir_box,
                 filename_box,
                 timestamp_toggle,
+                long_form_toggle,
+                max_chars_slider,
+                max_sentences_slider,
+                verbose_logs_toggle,
                 exaggeration_slider,
                 cfg_slider,
                 temperature_slider,
@@ -525,6 +675,10 @@ def build_ui() -> gr.Blocks:
                 output_dir_box,
                 filename_box,
                 timestamp_toggle,
+                long_form_toggle,
+                max_chars_slider,
+                max_sentences_slider,
+                verbose_logs_toggle,
                 exaggeration_slider,
                 cfg_slider,
                 temperature_slider,
@@ -547,13 +701,17 @@ def build_ui() -> gr.Blocks:
                 output_dir_box,
                 filename_box,
                 timestamp_toggle,
+                long_form_toggle,
+                max_chars_slider,
+                max_sentences_slider,
+                verbose_logs_toggle,
                 exaggeration_slider,
                 cfg_slider,
                 temperature_slider,
                 repetition_slider,
                 logs_box,
             ],
-            outputs=[result_audio, output_path_box, logs_box],
+            outputs=[result_audio, output_path_box, chunk_preview_box, logs_box],
         )
 
     return demo
