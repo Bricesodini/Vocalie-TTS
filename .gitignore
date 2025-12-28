@@ -1,0 +1,10 @@
+# Python / virtualenv
+.venv/
+__pycache__/
+*.pyc
+
+# Local app artifacts
+output/
+Ref_audio/
+.state/
+presets/
