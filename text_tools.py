@@ -17,6 +17,7 @@ FINAL_MERGE_EST_SECONDS = 3.5
 PAUSE_PATTERN = re.compile(r"\{(?P<token>pause:\s*\d+|breath|beat)\}", re.IGNORECASE)
 PAUSE_ALIASES = {"breath": 180, "beat": 250}
 MAX_PAUSE_MS = 4000
+DEFAULT_INTER_CHUNK_PAUSE_MS = 500
 
 
 def normalize_whitespace(text: str) -> str:
@@ -128,6 +129,21 @@ def _pause_duration(token: str) -> int:
             value = max(0, min(value, MAX_PAUSE_MS))
             return value
     return 0
+
+
+def get_trailing_silence_ms(segments: Iterable[SpeechSegment]) -> int:
+    total = 0
+    for segment in reversed(list(segments)):
+        if segment.kind != "silence":
+            break
+        total += segment.duration_ms
+    return total
+
+
+def compute_inter_chunk_pause_ms(trailing_ms: int, target_ms: int) -> int:
+    if trailing_ms >= target_ms:
+        return 0
+    return max(target_ms - max(trailing_ms, 0), 0)
 
 
 def _split_by_length(text: str, max_chars: int) -> List[str]:
@@ -354,6 +370,7 @@ __all__ = [
     "AVERAGE_WPS",
     "DEFAULT_MAX_CHARS_PER_CHUNK",
     "DEFAULT_MAX_PHRASES_PER_CHUNK",
+    "DEFAULT_INTER_CHUNK_PAUSE_MS",
     "FINAL_MERGE_EST_SECONDS",
     "DurationAdjustment",
     "SpeechSegment",
@@ -364,6 +381,8 @@ __all__ = [
     "chunk_script",
     "estimate_duration",
     "ensure_strong_ending",
+    "compute_inter_chunk_pause_ms",
+    "get_trailing_silence_ms",
     "normalize_whitespace",
     "render_clean_text",
     "render_clean_text_from_segments",

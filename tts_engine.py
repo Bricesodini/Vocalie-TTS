@@ -15,13 +15,17 @@ from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 
 from text_tools import (
+    DEFAULT_INTER_CHUNK_PAUSE_MS,
     SpeechSegment,
     chunk_script,
+    compute_inter_chunk_pause_ms,
     ensure_strong_ending,
+    get_trailing_silence_ms,
     render_clean_text_from_segments,
     split_text_and_pauses,
     stitch_segments,
 )
+from logging_utils import is_verbose, verbosity_context
 
 LOGGER = logging.getLogger("chatterbox_tts")
 
@@ -70,14 +74,15 @@ class TTSEngine:
         repetition_penalty: float,
     ) -> np.ndarray:
         assert self.tts is not None
-        wav = self.tts.generate(
-            text,
-            audio_prompt_path=audio_prompt_path,
-            exaggeration=float(exaggeration),
-            cfg_weight=float(cfg_weight),
-            temperature=float(temperature),
-            repetition_penalty=float(repetition_penalty),
-        )
+        with verbosity_context(verbose=is_verbose()):
+            wav = self.tts.generate(
+                text,
+                audio_prompt_path=audio_prompt_path,
+                exaggeration=float(exaggeration),
+                cfg_weight=float(cfg_weight),
+                temperature=float(temperature),
+                repetition_penalty=float(repetition_penalty),
+            )
         return wav.squeeze(0).detach().cpu().numpy().astype(np.float32)
 
     def _build_audio_from_segments(
@@ -153,6 +158,7 @@ class TTSEngine:
         repetition_penalty: float = 1.35,
         max_chars: int = 380,
         max_sentences: int = 3,
+        inter_chunk_pause_ms: int = DEFAULT_INTER_CHUNK_PAUSE_MS,
     ) -> tuple[str, int, Dict]:
         if not script.strip():
             raise ValueError("Le texte est vide.")
@@ -167,6 +173,8 @@ class TTSEngine:
         durations: List[float] = []
         clean_texts: List[str] = []
         retries: List[bool] = []
+        inter_chunk_pauses: List[int] = []
+        trailing_silences: List[int] = []
 
         for idx, chunk_info in enumerate(chunks, start=1):
             chunk_segments = list(chunk_info.segments)
@@ -206,6 +214,14 @@ class TTSEngine:
             retries.append(retried)
             durations.append(duration)
             audio_chunks.append(audio)
+            if idx < len(chunks):
+                trailing_ms = get_trailing_silence_ms(chunk_segments)
+                trailing_silences.append(trailing_ms)
+                add_ms = compute_inter_chunk_pause_ms(trailing_ms, inter_chunk_pause_ms)
+                inter_chunk_pauses.append(add_ms)
+                if add_ms > 0:
+                    frames = int(sr * (add_ms / 1000.0))
+                    audio_chunks.append(np.zeros(frames, dtype=np.float32))
 
         final_audio = np.concatenate(audio_chunks) if audio_chunks else np.zeros(0, dtype=np.float32)
         out_path = str(Path(out_path).expanduser().resolve())
@@ -216,6 +232,8 @@ class TTSEngine:
             "durations": durations,
             "clean_texts": clean_texts,
             "retries": retries,
+            "inter_chunk_pauses": inter_chunk_pauses,
+            "trailing_silences": trailing_silences,
             "total_duration": len(final_audio) / sr if sr else 0.0,
         }
         return out_path, sr, meta

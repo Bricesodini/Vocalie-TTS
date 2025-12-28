@@ -13,6 +13,7 @@ from typing import Optional
 
 import gradio as gr
 
+from logging_utils import set_verbosity
 from output_paths import make_output_filename, prepare_output_paths
 from refs import (
     ALLOWED_EXTENSIONS,
@@ -30,6 +31,7 @@ from state_manager import (
     save_state,
 )
 from text_tools import (
+    DEFAULT_INTER_CHUNK_PAUSE_MS,
     DEFAULT_MAX_CHARS_PER_CHUNK,
     DEFAULT_MAX_PHRASES_PER_CHUNK,
     FINAL_MERGE_EST_SECONDS,
@@ -165,7 +167,7 @@ def handle_load_preset(
     preset_name: str | None,
     log_text: str | None,
 ):
-    outputs = [gr.update() for _ in range(13)]
+    outputs = [gr.update() for _ in range(14)]
     name_update = gr.update()
     if not preset_name:
         log_text = append_log("Sélectionnez un preset à charger.", log_text)
@@ -189,6 +191,7 @@ def handle_load_preset(
         gr.update(value=bool(data.get("long_form", False))),
         gr.update(value=int(data.get("max_chars", DEFAULT_MAX_CHARS_PER_CHUNK))),
         gr.update(value=int(data.get("max_sentences", DEFAULT_MAX_PHRASES_PER_CHUNK))),
+        gr.update(value=int(data.get("inter_chunk_pause_ms", DEFAULT_INTER_CHUNK_PAUSE_MS))),
         gr.update(value=bool(data.get("verbose_logs", False))),
         gr.update(value=_coerce_float(data.get("exaggeration"), 0.5)),
         gr.update(value=_coerce_float(data.get("cfg_weight"), 0.6)),
@@ -211,6 +214,7 @@ def handle_save_preset(
     long_form: bool,
     max_chars: int,
     max_sentences: int,
+    inter_chunk_pause_ms: int,
     verbose_logs: bool,
     exaggeration: float,
     cfg_weight: float,
@@ -230,6 +234,7 @@ def handle_save_preset(
         "long_form": bool(long_form),
         "max_chars": int(max_chars),
         "max_sentences": int(max_sentences),
+        "inter_chunk_pause_ms": int(inter_chunk_pause_ms),
         "verbose_logs": bool(verbose_logs),
         "exaggeration": float(exaggeration),
         "cfg_weight": float(cfg_weight),
@@ -293,8 +298,16 @@ def handle_reset_chunk_defaults(log_text: str | None):
     return (
         gr.update(value=DEFAULT_MAX_CHARS_PER_CHUNK),
         gr.update(value=DEFAULT_MAX_PHRASES_PER_CHUNK),
+        gr.update(value=DEFAULT_INTER_CHUNK_PAUSE_MS),
         log_text,
     )
+
+
+def handle_toggle_verbose_logs(verbose: bool, log_text: str | None):
+    set_verbosity(bool(verbose))
+    persist_state({"last_verbose_logs": bool(verbose)})
+    log_text = append_ui_log("Verbosity terminal mise à jour.", log_text)
+    return log_text
 
 
 def handle_generate(
@@ -306,6 +319,7 @@ def handle_generate(
     long_form: bool,
     max_chars: int,
     max_sentences: int,
+    inter_chunk_pause_ms: int,
     verbose_logs: bool,
     exaggeration: float,
     cfg_weight: float,
@@ -379,6 +393,14 @@ def handle_generate(
                 repetition_penalty=repetition_penalty,
                 max_chars=int(max_chars),
                 max_sentences=int(max_sentences),
+                inter_chunk_pause_ms=int(inter_chunk_pause_ms),
+            )
+            pause_mode = "smart"
+            log_text = append_ui_log(
+                f"Pause inter-chunk: {int(inter_chunk_pause_ms)}ms ({pause_mode})",
+                log_text,
+                verbose=False,
+                enabled=True,
             )
             for idx, duration in enumerate(meta.get("durations", []), start=1):
                 retry_flag = meta.get("retries", [])[idx - 1] if meta.get("retries") else False
@@ -387,11 +409,16 @@ def handle_generate(
                 phrases = chunk_info.sentence_count if chunk_info else 0
                 chars = chunk_info.char_count if chunk_info else 0
                 est = chunk_info.estimated_duration if chunk_info else 0.0
+                add_pause = meta.get("inter_chunk_pauses", [])
+                trailing = meta.get("trailing_silences", [])
+                pause_note = ""
+                if idx - 1 < len(add_pause):
+                    pause_note = f" inter-pause=+{add_pause[idx - 1]}ms trailing={trailing[idx - 1]}ms"
                 retry_note = " retry" if retry_flag else ""
                 log_text = append_ui_log(
                     f"Chunk {idx}/{meta.get('chunks', len(meta.get('durations', [])))} "
                     f"reason={reason} phrases={phrases} chars={chars} "
-                    f"est={est:.1f}s measured={duration:.2f}s{retry_note}",
+                    f"est={est:.1f}s measured={duration:.2f}s{retry_note}{pause_note}",
                     log_text,
                     verbose=True,
                     enabled=verbose_logs,
@@ -436,6 +463,7 @@ def handle_generate(
             "last_long_form": bool(long_form),
             "last_max_chars": int(max_chars),
             "last_max_sentences": int(max_sentences),
+            "last_inter_chunk_pause_ms": int(inter_chunk_pause_ms),
             "last_verbose_logs": bool(verbose_logs),
         }
     )
@@ -455,6 +483,9 @@ def build_ui() -> gr.Blocks:
     default_long_form = _coerce_bool(state_data.get("last_long_form"), False)
     default_max_chars = int(state_data.get("last_max_chars") or DEFAULT_MAX_CHARS_PER_CHUNK)
     default_max_sentences = int(state_data.get("last_max_sentences") or DEFAULT_MAX_PHRASES_PER_CHUNK)
+    default_inter_chunk_pause = int(
+        state_data.get("last_inter_chunk_pause_ms") or DEFAULT_INTER_CHUNK_PAUSE_MS
+    )
     default_verbose_logs = _coerce_bool(state_data.get("last_verbose_logs"), False)
     default_exaggeration = _coerce_float(state_data.get("last_exaggeration"), 0.5)
     default_cfg = _coerce_float(state_data.get("last_cfg_weight"), 0.6)
@@ -466,6 +497,7 @@ def build_ui() -> gr.Blocks:
         default_preset = None
 
     with gr.Blocks(title="Chatterbox TTS FR", css=".section-title {font-weight:600;}") as demo:
+        set_verbosity(default_verbose_logs)
         gr.Markdown("""# 🎙️ Chatterbox TTS FR\nInterface locale pour générer des voix off expressives.""")
 
         with gr.Group():
@@ -529,6 +561,14 @@ def build_ui() -> gr.Blocks:
                         step=1,
                         label="Max phrases/chunk",
                         info=f"Nombre maximal de phrases par génération. Seuil merge final: {FINAL_MERGE_EST_SECONDS:.1f}s.",
+                    )
+                    inter_chunk_pause_slider = gr.Slider(
+                        0,
+                        2000,
+                        value=default_inter_chunk_pause,
+                        step=50,
+                        label="Pause entre chunks (ms)",
+                        info="Ajoute une respiration/ponctuation entre phrases. 500ms = demi-seconde.",
                     )
                     reset_chunk_btn = gr.Button("↺", size="sm")
                     verbose_logs_toggle = gr.Checkbox(
@@ -644,7 +684,12 @@ def build_ui() -> gr.Blocks:
         reset_chunk_btn.click(
             fn=handle_reset_chunk_defaults,
             inputs=[logs_box],
-            outputs=[max_chars_slider, max_sentences_slider, logs_box],
+            outputs=[max_chars_slider, max_sentences_slider, inter_chunk_pause_slider, logs_box],
+        )
+        verbose_logs_toggle.change(
+            fn=handle_toggle_verbose_logs,
+            inputs=[verbose_logs_toggle, logs_box],
+            outputs=[logs_box],
         )
         load_preset_btn.click(
             fn=handle_load_preset,
@@ -657,6 +702,7 @@ def build_ui() -> gr.Blocks:
                 long_form_toggle,
                 max_chars_slider,
                 max_sentences_slider,
+                inter_chunk_pause_slider,
                 verbose_logs_toggle,
                 exaggeration_slider,
                 cfg_slider,
@@ -678,6 +724,7 @@ def build_ui() -> gr.Blocks:
                 long_form_toggle,
                 max_chars_slider,
                 max_sentences_slider,
+                inter_chunk_pause_slider,
                 verbose_logs_toggle,
                 exaggeration_slider,
                 cfg_slider,
@@ -704,6 +751,7 @@ def build_ui() -> gr.Blocks:
                 long_form_toggle,
                 max_chars_slider,
                 max_sentences_slider,
+                inter_chunk_pause_slider,
                 verbose_logs_toggle,
                 exaggeration_slider,
                 cfg_slider,

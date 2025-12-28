@@ -4,7 +4,9 @@ from text_tools import (
     FINAL_MERGE_EST_SECONDS,
     MAX_PAUSE_MS,
     chunk_script,
+    compute_inter_chunk_pause_ms,
     ensure_strong_ending,
+    get_trailing_silence_ms,
     render_clean_text_from_segments,
     stitch_segments,
 )
@@ -80,3 +82,37 @@ def test_preview_does_not_include_injected_punctuation():
     ensure_strong_ending(segments)
     injected = render_clean_text_from_segments(segments)
     assert injected.endswith(".")
+
+
+def test_trailing_silence_ms():
+    chunks = chunk_script("Hello{pause:400}", max_chars=120, max_sentences=2)
+    trailing = get_trailing_silence_ms(chunks[0].segments)
+    assert trailing == 400
+    chunks = chunk_script("Hello{breath}", max_chars=120, max_sentences=2)
+    trailing = get_trailing_silence_ms(chunks[0].segments)
+    assert trailing == 180
+
+
+def test_smart_inter_chunk_pause():
+    assert compute_inter_chunk_pause_ms(0, 500) == 500
+    assert compute_inter_chunk_pause_ms(200, 500) == 300
+    assert compute_inter_chunk_pause_ms(600, 500) == 0
+
+
+def test_inter_chunk_concat_count():
+    sr = 1000
+    text = "A. B. C."
+    chunks = chunk_script(text, max_chars=20, max_sentences=1)
+
+    def synth_fn(t: str) -> np.ndarray:
+        return np.ones(len(t), dtype=np.float32)
+
+    audio_parts = []
+    for idx, chunk_info in enumerate(chunks):
+        audio = stitch_segments(chunk_info.segments, sr, synth_fn)
+        audio_parts.append(audio)
+        if idx < len(chunks) - 1:
+            audio_parts.append(np.zeros(int(sr * 0.5), dtype=np.float32))
+    combined = np.concatenate(audio_parts)
+    assert len(audio_parts) == len(chunks) * 2 - 1
+    assert combined.size > 0

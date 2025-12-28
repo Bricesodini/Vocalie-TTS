@@ -117,6 +117,7 @@ Gradio démarre sur http://127.0.0.1:7860. Tout tourne localement (pas de cloud 
 - Textbox « Texte interprété » : affiche le script réellement envoyé au TTS (balises de pause retirées).
 - **Long-form (auto-chunk)** : active la génération multi-chunks (utile > 40s). Réglages `Max phrases/chunk` (règle principale) et `Max chars/chunk` (fallback strict).  
 - Accordion « Aperçu des chunks » : affiche le découpage réel (index, phrases, chars, durée estimée, raison du split).
+- Le toggle **Logs détaillés** contrôle aussi la verbosité du terminal (tqdm + logs internes).
 
 #### Respiration & pauses custom
 Utilisez des balises maison pour gérer les silences sans casser le modèle :
@@ -207,7 +208,14 @@ pytest -q
 
 ---
 
-## 8. Prochaines itérations possibles
+## 8. Logs terminal (tqdm / internes)
+
+- Par défaut, le terminal est “clean” (pas de barres tqdm ni logs internes).
+- Activer **Logs détaillés** pour réactiver le verbose terminal.
+
+---
+
+## 9. Prochaines itérations possibles
 
 - LLM local pour reformulations plus intelligentes à durée cible.
 - Bouton « Ouvrir dossier de sortie » depuis l’UI.
@@ -216,7 +224,7 @@ pytest -q
 
 ---
 
-## 9. FAQ
+## 10. FAQ
 
 **Q : J’obtiens des warnings Transformers (cache/attention). Dois-je m’inquiéter ?**  
 R : Non, ils sont courants avec Chatterbox et n’impactent pas la génération. Vous pouvez réduire leur verbosité via `os.environ["TRANSFORMERS_VERBOSITY"] = "error"` si besoin.
