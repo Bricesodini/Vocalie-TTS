@@ -1,0 +1,9 @@
+chatterbox-tts
+torch
+gradio
+librosa
+soundfile
+huggingface_hub
+safetensors
+numpy
+pytest

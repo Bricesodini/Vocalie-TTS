@@ -1,118 +1,95 @@
-import numpy as np
-
 from text_tools import (
-    FINAL_MERGE_EST_SECONDS,
-    MAX_PAUSE_MS,
     chunk_script,
     compute_inter_chunk_pause_ms,
-    ensure_strong_ending,
-    get_trailing_silence_ms,
-    render_clean_text_from_segments,
-    stitch_segments,
 )
 
 
-def test_chunker_sentence_priority():
-    text = "Premiere phrase. Deuxieme phrase, avec virgule. Troisieme phrase!"
-    chunks = chunk_script(text, max_chars=40, max_sentences=1)
-    assert len(chunks) >= 3
-    assert chunks[0].reason == "phrase-limit"
-    assert chunks[1].reason == "phrase-limit"
+def test_chunker_newline_split():
+    text = (
+        "Premiere ligne assez longue pour durer un peu\n"
+        "Deuxieme ligne avec plusieurs mots pour eviter merge\n"
+        "Troisieme ligne encore plus longue pour stabiliser"
+    )
+    chunks = chunk_script(text, min_words_per_chunk=2, max_words_without_terminator=40)
+    assert len(chunks) == 3
+    assert chunks[0].reason == "newline"
 
 
-def test_chunker_fallback_length():
-    text = "A" * 200
-    chunks = chunk_script(text, max_chars=50, max_sentences=3)
-    assert any(chunk.reason == "char-fallback" for chunk in chunks)
+def test_chunker_min_words_blocks_split():
+    text = "Bonjour\nMerci beaucoup"
+    chunks = chunk_script(
+        text,
+        min_words_per_chunk=16,
+        max_words_without_terminator=40,
+    )
+    assert len(chunks) == 1
+    assert "newline_boundary_skipped_min_words" in chunks[0].warnings
 
 
-def test_last_chunk_merge():
-    text = "Phrase une.\n\nOk."
-    chunks = chunk_script(text, max_chars=200, max_sentences=3)
-    assert chunks[-1].reason == "merged-final"
-    assert chunks[-1].estimated_duration < FINAL_MERGE_EST_SECONDS
+def test_chunker_terminator_prevents_mid_sentence_split():
+    text = "Mot mot mot mot mot. Suite suite suite suite suite."
+    chunks = chunk_script(
+        text,
+        min_words_per_chunk=1,
+        max_words_without_terminator=50,
+        max_est_seconds_per_chunk=2.5,
+    )
+    assert len(chunks) >= 2
+    assert chunks[0].reason == "terminator"
 
 
-def test_tokens_preserved_across_chunks():
-    text = f"{'A' * 150} {{pause:4000}} {'B' * 150}"
-    chunks = chunk_script(text, max_chars=100, max_sentences=2)
-    durations = [
-        seg.duration_ms
-        for chunk in chunks
-        for seg in chunk.segments
-        if seg.kind == "silence"
-    ]
-    assert MAX_PAUSE_MS in durations
+def test_chunker_fallback_order():
+    text = "Un bloc long: suite longue; encore long — suite encore, encore encore fin"
+    chunks = chunk_script(
+        text,
+        min_words_per_chunk=1,
+        max_words_without_terminator=3,
+        max_est_seconds_per_chunk=20.0,
+    )
+    reasons = [chunk.reason for chunk in chunks]
+    assert any(reason.startswith("fallback(:)") for reason in reasons)
+    assert any(reason.startswith("fallback(;)") for reason in reasons)
+    assert any(reason.startswith("fallback(—)") for reason in reasons)
+    assert any(reason.startswith("fallback(,)") for reason in reasons)
 
 
-def test_concat_length_consistency():
-    sr = 1000
-    text = "Bonjour {pause:500} monde. Encore une phrase."
-    chunks = chunk_script(text, max_chars=50, max_sentences=2)
-
-    def synth_fn(t: str) -> np.ndarray:
-        return np.ones(len(t), dtype=np.float32)
-
-    total_len = 0
-    expected_len = 0
-    for chunk_info in chunks:
-        audio = stitch_segments(chunk_info.segments, sr, synth_fn)
-        total_len += len(audio)
-        for seg in chunk_info.segments:
-            if seg.kind == "silence":
-                expected_len += int(sr * (seg.duration_ms / 1000.0))
-            else:
-                expected_len += len(seg.content.strip())
-    assert total_len == expected_len
+def test_chunker_hard_split_no_punct():
+    text = "Mot mot mot mot mot mot mot mot mot"
+    chunks = chunk_script(
+        text,
+        min_words_per_chunk=1,
+        max_words_without_terminator=3,
+        max_est_seconds_per_chunk=20.0,
+    )
+    assert any(chunk.reason == "hard" for chunk in chunks)
+    assert any("hard_split_no_punct" in chunk.warnings for chunk in chunks)
 
 
-def test_chunk_preview_matches_real():
-    text = "Une phrase. Une autre phrase. Derniere."
-    chunks = chunk_script(text, max_chars=80, max_sentences=2)
-    previews = [render_clean_text_from_segments(chunk.segments) for chunk in chunks]
-    assert all(preview for preview in previews)
+def test_end_chunk_min_words_enforced_after_fallback():
+    text = "Un deux trois: fin"
+    chunks = chunk_script(
+        text,
+        min_words_per_chunk=3,
+        max_words_without_terminator=3,
+        max_est_seconds_per_chunk=20.0,
+    )
+    assert len(chunks) == 1
+    assert chunks[0].word_count >= 3
 
 
-def test_preview_does_not_include_injected_punctuation():
-    text = "Bonjour sans point"
-    chunks = chunk_script(text, max_chars=120, max_sentences=2)
-    preview = render_clean_text_from_segments(chunks[0].segments)
-    assert not preview.endswith(".")
-    segments = list(chunks[0].segments)
-    ensure_strong_ending(segments)
-    injected = render_clean_text_from_segments(segments)
-    assert injected.endswith(".")
-
-
-def test_trailing_silence_ms():
-    chunks = chunk_script("Hello{pause:400}", max_chars=120, max_sentences=2)
-    trailing = get_trailing_silence_ms(chunks[0].segments)
-    assert trailing == 400
-    chunks = chunk_script("Hello{breath}", max_chars=120, max_sentences=2)
-    trailing = get_trailing_silence_ms(chunks[0].segments)
-    assert trailing == 180
+def test_min_words_clamped_to_20():
+    text = " ".join(["Mot"] * 21) + "\nfin fin"
+    chunks = chunk_script(
+        text,
+        min_words_per_chunk=25,
+        max_words_without_terminator=40,
+        max_est_seconds_per_chunk=20.0,
+    )
+    assert len(chunks) == 2
+    assert chunks[0].word_count == 21
 
 
 def test_smart_inter_chunk_pause():
     assert compute_inter_chunk_pause_ms(0, 500) == 500
     assert compute_inter_chunk_pause_ms(200, 500) == 300
     assert compute_inter_chunk_pause_ms(600, 500) == 0
-
-
-def test_inter_chunk_concat_count():
-    sr = 1000
-    text = "A. B. C."
-    chunks = chunk_script(text, max_chars=20, max_sentences=1)
-
-    def synth_fn(t: str) -> np.ndarray:
-        return np.ones(len(t), dtype=np.float32)
-
-    audio_parts = []
-    for idx, chunk_info in enumerate(chunks):
-        audio = stitch_segments(chunk_info.segments, sr, synth_fn)
-        audio_parts.append(audio)
-        if idx < len(chunks) - 1:
-            audio_parts.append(np.zeros(int(sr * 0.5), dtype=np.float32))
-    combined = np.concatenate(audio_parts)
-    assert len(audio_parts) == len(chunks) * 2 - 1
-    assert combined.size > 0

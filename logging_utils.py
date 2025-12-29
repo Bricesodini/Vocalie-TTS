@@ -10,10 +10,22 @@ from typing import Iterator
 
 
 _QUIET_MODE = True
+_ROOT_FILTER: logging.Filter | None = None
+
+
+class _SuppressMessageFilter(logging.Filter):
+    def __init__(self, patterns: tuple[str, ...]) -> None:
+        super().__init__()
+        self._patterns = patterns
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return not any(pattern in message for pattern in self._patterns)
 
 
 def set_verbosity(verbose: bool) -> None:
     global _QUIET_MODE
+    global _ROOT_FILTER
     _QUIET_MODE = not verbose
 
     if verbose:
@@ -29,6 +41,14 @@ def set_verbosity(verbose: bool) -> None:
 
     root = logging.getLogger()
     root.setLevel(logging.INFO if verbose else logging.WARNING)
+    if _ROOT_FILTER:
+        root.removeFilter(_ROOT_FILTER)
+        _ROOT_FILTER = None
+    if not verbose:
+        _ROOT_FILTER = _SuppressMessageFilter(
+            ("Reference mel length is not equal to 2 * reference token length.",)
+        )
+        root.addFilter(_ROOT_FILTER)
 
     logging.getLogger("chatterbox_tts").setLevel(logging.INFO)
     logging.getLogger("chatterbox.models.t3.t3").setLevel(logging.ERROR if not verbose else logging.INFO)
