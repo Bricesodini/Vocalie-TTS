@@ -1,8 +1,9 @@
 # 🎙️ Chatterbox TTS FR
 
-Interface Gradio locale pour piloter le modèle **Chatterbox TTS** avec le fine-tune français `Thomcles/Chatterbox-TTS-French`.
+Interface Gradio locale pour piloter le modèle **Chatterbox TTS** avec le model Chatterbox Multilingue ou le fine-tune français `Thomcles/Chatterbox-TTS-French`.
 
 ## Présentation
+
 Chatterbox TTS FR est une interface de production audio locale pensée pour la
 voix off : génération rapide, pré-écoute immédiate, presets réutilisables et
 gestion fine des pauses. La génération est isolée dans un process séparé pour
@@ -10,7 +11,22 @@ permettre un arrêt immédiat (STOP) sans corrompre les sorties. Un traitement
 audio optionnel (fade + zero-cross + détection de silences) réduit les pops
 aux coupes.
 
+### Choix du modèle (FR vs Multilingue)
+
+Deux backends sont disponibles :
+
+- **FR fine-tuné (Thomcles)** : voix française stable, diction propre et
+  comportement cohérent sur les scripts longs.
+- **Multilingue (Chatterbox)** : support multi‑langues (EN/ES/DE/IT/PT/NL),
+  utile pour les projets internationaux, avec un léger compromis possible sur
+  la stabilité et l’accent.
+
+Dans l’UI, utilisez **Modèle → FR fine‑tuné** pour une voix française optimale,
+ou **Modèle → Chatterbox multilangue** pour basculer sur les langues
+internationales.
+
 Pensée pour les créatifs audiovisuels :
+
 - sélection d’une **référence voix**
 - saisie de **texte multi-ligne**
 - **ajustement optionnel** à une durée cible
@@ -114,12 +130,14 @@ Gradio démarre sur http://127.0.0.1:7860. Tout tourne localement (pas de cloud 
 ## 4. Parcours utilisateur
 
 ### 4.1 Références vocales
+
 - La liste déroulante affiche le contenu de `Ref_audio/`.
 - Bouton **Refresh** : re-scan du dossier.
 - Upload : copie dans `Ref_audio/` avec suffixes anti-collision (`_01_YYYYMMDD_HHMMSS`).
 - Extensions autorisées : `.wav`, `.mp3`, `.m4a`, `.aiff`, `.flac` (les autres sont refusées proprement avec log explicite).
 
 ### 4.2 Zone texte & durée cible
+
 - Champ multiligne (pas de SSML requis).
 - Optionnel : renseignez une durée cible (secondes) puis cliquez sur **Ajuster le texte**.
 - La suggestion apparaît en lecture seule ; **Utiliser la suggestion** remplace votre texte.
@@ -135,10 +153,11 @@ Gradio démarre sur http://127.0.0.1:7860. Tout tourne localement (pas de cloud 
 - Accordion « Aperçu des chunks » : liste numérotée (words, est_seconds, cut_reason, warnings).
 - Le toggle **Logs détaillés** contrôle aussi la verbosité du terminal (tqdm + logs internes).
 - Preset prêt à l’emploi : **stable-long-form** (pauses plus courtes + min mots + max durée).
- - Le preset **stable-long-form** est recommandé pour les textes longs ou littéraires afin d’éviter toute dérive vocale.
- - Preset **default** : profil grand public (robuste).
+- Le preset **stable-long-form** est recommandé pour les textes longs ou littéraires afin d’éviter toute dérive vocale.
+- Preset **default** : profil grand public (robuste).
 
 #### Pauses automatiques (ponctuation)
+
 - Virgule `,` : pause réglable (par défaut 250ms).
 - Point / fin de phrase `. ! ? …` : pause réglable (par défaut 400ms).
 - Point-virgule `;`, deux-points `:`, tiret `—`/`-` : pauses réglables.
@@ -147,6 +166,7 @@ Gradio démarre sur http://127.0.0.1:7860. Tout tourne localement (pas de cloud 
 - Les anciens tokens `{pause:ms}`, `{breath}`, `{beat}` sont ignorés si présents.
 
 ### Pré-chunking — ordre de priorité (résumé)
+
 Le découpage suit une logique déterministe :
 
 1. Retour ligne `\n` (prioritaire) si `min_words_per_chunk` atteint.
@@ -157,16 +177,20 @@ Le découpage suit une logique déterministe :
 Note : la ponctuation sert au rythme et n’est jamais un déclencheur de chunking hors fallback/limites.
 
 ### Anti-charabia (recommandé)
+
 Si vous entendez des mots incompréhensibles en long-form :
+
 - utilisez le preset **stable-long-form**
 - activez **Stabiliser ponctuation**
 - réduisez la **Température** (ex: 0.3–0.4) et augmentez légèrement le **CFG** (ex: 0.7–0.9)
 - évitez les références vocales trop traitées (denoise agressif, compression) ou avec de longs silences “zéro”
 
 Option future souhaitable :
+
 - Bouton “Optimiser pour stabilité TTS” → applique le preset **stable-long-form**.
 
 ### 4.3 Paramètres créatifs
+
 - Exagération (0–1.5) : expressivité globale.
 - CFG : stabilité / tenue de la voix.
 - Température : stabilité vs variation.
@@ -175,12 +199,14 @@ Option future souhaitable :
 Valeurs par défaut : 0.5 · 0.6 · 0.5 · 1.35 conformément au cahier des charges.
 
 ### 4.4 Traitement audio (coupes)
+
 - Fade (ms) : fondu appliqué aux coupes.
 - Zero-cross radius (ms) : fenêtre autour des coupes pour trouver le passage à zéro.
 - Silence threshold : amplitude max pour considérer un silence.
 - Silence min (ms) : durée min d’un silence pour appliquer le fade.
 
 ### 4.5 Sortie
+
 - Champ « Dossier de sortie » (par défaut `output/`) personnalisable.
 - Bouton **Choisir…** : ouvre le sélecteur natif macOS (Finder) et remplit automatiquement le champ avec le dossier choisi.
 - Champ « Nom de fichier (optionnel) » : impose un nom (nettoyé), sinon fallback slug texte/ref.
@@ -191,9 +217,11 @@ Valeurs par défaut : 0.5 · 0.6 · 0.5 · 1.35 conformément au cahier des char
 - Nom final robuste, aucune écrasement silencieux.
 
 ### 4.6 Logs
+
 Chaque action ajoute une ligne horodatée : import réussi/refusé, estimation + ajustement durée, lancement TTS, chemin de sortie, erreurs éventuelles.
 
 ### 4.7 Presets & état
+
 - L’état courant (dernier dossier, sliders, nom de fichier, toggle timestamp…) est sauvegardé dans `./.state/state.json` à chaque génération ou changement d’output. Au redémarrage, l’UI se pré-remplit automatiquement.
 - Section **Presets** :
   - Dropdown des presets présents dans `./presets/*.json`
@@ -214,6 +242,7 @@ Chaque action ajoute une ligne horodatée : import réussi/refusé, estimation +
 - Pré-chunking : découpage déterministe avant synthèse, avec fallback ponctuation puis hard split si nécessaire.
 
 ### Cache Hugging Face
+
 - Les poids sont mis en cache automatiquement par `huggingface_hub` (par défaut sous `~/.cache/huggingface/`).
 - Après le premier téléchargement, l’outil fonctionne hors-ligne tant que ce cache est présent.
 
