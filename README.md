@@ -1,29 +1,51 @@
-# 🎙️ Chatterbox TTS FR
+# 🎙️ Vocalie-TTS
 
 Interface Gradio locale pour piloter le modèle **Chatterbox TTS** avec le model Chatterbox Multilingue ou le fine-tune français `Thomcles/Chatterbox-TTS-French`.
 
 ## Présentation
 
-Chatterbox TTS FR est une interface de production audio locale pensée pour la
+Vocalie-TTS est une interface de production audio locale pensée pour la
 voix off : génération rapide, pré-écoute immédiate, presets réutilisables et
 gestion fine des pauses. La génération est isolée dans un process séparé pour
 permettre un arrêt immédiat (STOP) sans corrompre les sorties. Un traitement
 audio optionnel (fade + zero-cross + détection de silences) réduit les pops
 aux coupes.
 
-### Choix du modèle (FR vs Multilingue)
+### Choix du moteur TTS
 
-Deux backends sont disponibles :
+Plusieurs moteurs sont disponibles :
 
-- **FR fine-tuné (Thomcles)** : voix française stable, diction propre et
-  comportement cohérent sur les scripts longs.
-- **Multilingue (Chatterbox)** : support multi‑langues (EN/ES/DE/IT/PT/NL),
-  utile pour les projets internationaux, avec un léger compromis possible sur
-  la stabilité et l’accent.
+- **Chatterbox (stable long-form)** : voix française stable, diction propre et
+  comportement cohérent sur les scripts longs (FR + multi‑langues).
+- **XTTS v2** : voice cloning (disponible si dépendances installées).
+- **Piper** : TTS offline très rapide (disponible si dépendances installées).
+- **Bark** : synthèse créative (disponible si dépendances installées).
 
-Dans l’UI, utilisez **Modèle → FR fine‑tuné** pour une voix française optimale,
-ou **Modèle → Chatterbox multilangue** pour basculer sur les langues
-internationales.
+Dans l’UI, utilisez **Moteur** pour choisir le backend. Les moteurs
+indisponibles sont annotés dans la liste.
+
+Backends optionnels :
+
+- XTTS / Piper / Bark requièrent des dépendances supplémentaires (non installées par défaut).
+- Si un backend est indisponible, l’UI l’indique et la génération est bloquée avec un log explicite.
+
+### Paramètres par moteur (capability-driven)
+
+L’UI s’adapte automatiquement aux capacités du moteur sélectionné :
+
+- les paramètres affichés proviennent du **schema de capacités** du backend,
+- seuls les paramètres supportés sont envoyés au moteur (pas de pollution inter‑moteurs),
+- **fr-FR** est toujours la langue par défaut si disponible,
+- la **langue** est masquée si le backend est mono‑langue,
+- la **voix** (Piper) n’apparaît que si plusieurs voix sont installées.
+
+### Piper : voix (assets)
+
+Piper nécessite des **voix** (assets) en plus du moteur (venv).
+
+- Installer une voix FR recommandée : bouton dédié dans l’UI (pas d’auto‑install).
+- Catalogue : https://huggingface.co/rhasspy/piper-voices/tree/main
+- Installation manuelle : déposer `ma_voix.onnx` et `ma_voix.onnx.json` dans `./.assets/piper/voices/` (sous-dossiers acceptés), puis cliquer **Refresh voix** dans l’UI.
 
 Pensée pour les créatifs audiovisuels :
 
@@ -40,7 +62,7 @@ Pensée pour les créatifs audiovisuels :
 ## Quickstart (60 secondes)
 
 ```bash
-cd /Users/bricesodini/01_ai-stack/Chatterbox
+cd /Users/bricesodini/01_ai-stack/Vocalie-TTS
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
@@ -75,7 +97,7 @@ Au premier lancement, les poids Hugging Face sont téléchargés et mis en cache
 ### Installation type
 
 ```bash
-cd /Users/bricesodini/01_ai-stack/Chatterbox
+cd /Users/bricesodini/01_ai-stack/Vocalie-TTS
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
@@ -89,7 +111,7 @@ pip install -r requirements.txt
 ## 2. Structure projet
 
 ```
-Chatterbox/
+Vocalie-TTS/
 ├── app.py            # UI Gradio (entrée principale)
 ├── refs.py           # gestion des fichiers Ref_audio/
 ├── text_tools.py     # outils texte + estimation/ajustement durée
@@ -97,6 +119,7 @@ Chatterbox/
 ├── output_paths.py   # nommage + gestion preview/user
 ├── state_manager.py  # persistence state + presets
 ├── lexique_tts_fr.json # lexique d'exceptions / sigles pour TTS
+├── tts_backends/     # backends modulaires (Chatterbox, XTTS, Piper, Bark)
 ├── Ref_audio/        # références vocales (source unique de vérité)
 ├── output/           # WAV générés + preview Gradio
 ├── .state/state.json # état auto (dernier out dir, sliders…)
@@ -119,7 +142,7 @@ Chatterbox/
 ## 3. Lancer l’application
 
 ```bash
-cd /Users/bricesodini/01_ai-stack/Chatterbox
+cd /Users/bricesodini/01_ai-stack/Vocalie-TTS
 source .venv/bin/activate
 python app.py
 ```
