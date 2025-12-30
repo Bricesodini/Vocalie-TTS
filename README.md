@@ -11,6 +11,8 @@ permettre un arrêt immédiat (STOP) sans corrompre les sorties. Un traitement
 audio optionnel (fade + zero-cross + détection de silences) réduit les pops
 aux coupes.
 
+Vocalie-TTS s’adresse aux créateurs audio/vidéo (voix off, narration, podcast) qui veulent produire **localement** des rendus **stables** et **contrôlables**, sans dépendance cloud, avec un pipeline de préparation/assemblage pensé pour un usage "production".
+
 ### Choix du moteur TTS
 
 Plusieurs moteurs sont disponibles :
@@ -38,6 +40,19 @@ L’UI s’adapte automatiquement aux capacités du moteur sélectionné :
 - **fr-FR** est toujours la langue par défaut si disponible,
 - la **langue** est masquée si le backend est mono‑langue,
 - la **voix** (Piper) n’apparaît que si plusieurs voix sont installées.
+
+### Pipeline commun (tous moteurs)
+
+Quel que soit le moteur sélectionné (Chatterbox, XTTS, Piper, Bark), Vocalie applique la même chaîne de traitement :
+
+- normalisation du texte + lexique FR (si activé)
+- pré-chunking déterministe
+- pauses basées sur la ponctuation (virgules, points, retours ligne, etc.)
+- synthèse **chunk-par-chunk**
+- concaténation + insertion des silences planifiés
+- post-processing audio (fade, zero-cross, trimming des bords, resampling si nécessaire)
+
+Les fonctionnalités spécifiques à un moteur (ex: retry anti early-EOS côté Chatterbox) restent encapsulées dans le backend, sans impacter les autres.
 
 ### Piper : voix (assets)
 
@@ -164,7 +179,7 @@ Gradio démarre sur http://127.0.0.1:7860. Tout tourne localement (pas de cloud 
 
 - Champ multiligne (pas de SSML requis).
 - Toggle **Auto-ajustement** : applique une normalisation de base + lexique des sigles avant estimation/chunking/synthèse.
-- Champ **Texte ajusté** : affiche *exactement* le texte envoyé au moteur TTS.
+- Champ **Texte ajusté** : affiche _exactement_ le texte envoyé au moteur TTS.
 - Toggle **Afficher log** : liste les corrections appliquées (normalisation, undot sigles, exceptions, auto‑sigles).
 - Optionnel : renseignez une durée cible (secondes) puis cliquez sur **Ajuster le texte**.
 - La suggestion apparaît en lecture seule ; **Utiliser la suggestion** remplace votre texte.
@@ -325,3 +340,23 @@ pytest -q
 
 **Q : J’obtiens des warnings Transformers (cache/attention). Dois-je m’inquiéter ?**  
 R : Non, ils sont courants avec Chatterbox et n’impactent pas la génération. Vous pouvez réduire leur verbosité via `os.environ["TRANSFORMERS_VERBOSITY"] = "error"` si besoin.
+
+---
+
+## Remerciements
+
+Un grand merci aux projets open source qui rendent cette stack possible, notamment :
+
+- **Gradio** (UI)
+- **PyTorch** (backend ML / MPS)
+- **Chatterbox TTS** (modèle de base)
+- **Thomcles/Chatterbox-TTS-French** (fine-tune FR)
+- **Piper TTS** et le catalogue **rhasspy/piper-voices** (TTS offline + voix)
+- **XTTS v2 / Coqui TTS** (voice cloning)
+- **Bark** (synthèse créative)
+- **Hugging Face Hub** (`huggingface_hub`, `safetensors`) pour la distribution/cache des poids
+- **librosa** et **soundfile** (I/O + analyse audio)
+- **numpy** (traitements numériques)
+- **pytest** (tests)
+
+Si j’ai oublié un composant, ouvre une issue/PR et je l’ajoute volontiers.
