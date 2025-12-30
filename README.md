@@ -96,6 +96,7 @@ Chatterbox/
 ├── tts_engine.py     # wrapper Chatterbox + fine-tune Thomcles
 ├── output_paths.py   # nommage + gestion preview/user
 ├── state_manager.py  # persistence state + presets
+├── lexique_tts_fr.json # lexique d'exceptions / sigles pour TTS
 ├── Ref_audio/        # références vocales (source unique de vérité)
 ├── output/           # WAV générés + preview Gradio
 ├── .state/state.json # état auto (dernier out dir, sliders…)
@@ -139,10 +140,13 @@ Gradio démarre sur http://127.0.0.1:7860. Tout tourne localement (pas de cloud 
 ### 4.2 Zone texte & durée cible
 
 - Champ multiligne (pas de SSML requis).
+- Toggle **Auto-ajustement** : applique une normalisation de base + lexique des sigles avant estimation/chunking/synthèse.
+- Champ **Texte ajusté** : affiche *exactement* le texte envoyé au moteur TTS.
+- Toggle **Afficher log** : liste les corrections appliquées (normalisation, undot sigles, exceptions, auto‑sigles).
 - Optionnel : renseignez une durée cible (secondes) puis cliquez sur **Ajuster le texte**.
 - La suggestion apparaît en lecture seule ; **Utiliser la suggestion** remplace votre texte.
 - Avertissement si l’algorithme a dû couper/allonger de façon importante (±20 %).
-- Textbox « Texte interprété » : affiche le script réellement envoyé au TTS (anciens tokens ignorés).
+- Textbox « Texte interprété » : affiche le script nettoyé (anciennes balises ignorées).
 - **Pré-chunking** : découpage déterministe AVANT la synthèse (utile > 40s).
 - Slider **Mots minimum par chunk** : évite les fragments trop courts (ex: ligne d’un mot).
 - Slider **Max mots sans terminator** : seuil de fallback si aucune fin de phrase n’est détectée.
@@ -164,6 +168,12 @@ Gradio démarre sur http://127.0.0.1:7860. Tout tourne localement (pas de cloud 
 - Retour ligne `\n` : pause réglable (par défaut 300ms).
 - La ponctuation est conservée dans le texte envoyé au modèle ; les silences sont ajoutés au montage audio.
 - Les anciens tokens `{pause:ms}`, `{breath}`, `{beat}` sont ignorés si présents.
+
+### Auto-ajustement (lexique sigles)
+
+- Les sigles pointés (`C.N.C.`) sont “undotés” puis remplacés si une exception existe (ex: `CNC` → `céainecé`).
+- Les sigles en MAJUSCULES (2–6 lettres) sont phonétisés via le lexique si aucune exception n’existe.
+- Les tokens avec chiffres (`USB4`, `4K`) ne sont pas auto‑phonétisés (prévoir une exception si besoin).
 
 ### Pré-chunking — ordre de priorité (résumé)
 
