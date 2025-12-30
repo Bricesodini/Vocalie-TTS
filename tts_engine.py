@@ -866,8 +866,12 @@ def _prepare_segments_for_synthesis(segments: List[SpeechSegment]) -> List[Speec
             return
         merged_texts = _merge_short_text_block(block)
         for text in merged_texts:
-            if _is_too_short_text(text) and not _has_alnum(text):
-                LOGGER.debug("skip_short_segment")
+            if _is_too_short_text(text):
+                if prepared and prepared[-1].kind == "text":
+                    merged = _merge_text_chunks(prepared[-1].content, text)
+                    prepared[-1] = SpeechSegment("text", merged)
+                else:
+                    LOGGER.debug("skip_short_segment")
                 continue
             prepared.append(SpeechSegment("text", text))
         block.clear()

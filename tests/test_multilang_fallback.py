@@ -20,7 +20,7 @@ class DummyBackend:
 def test_language_id_fallback_to_language():
     engine = TTSEngine()
     backend = DummyBackend()
-    wav = engine._synthesize_text(
+    wav, _ = engine._synthesize_text(
         backend,
         "Bonjour",
         None,

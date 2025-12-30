@@ -51,6 +51,7 @@ from text_tools import (
     chunk_script,
     estimate_duration_with_pauses,
     normalize_text,
+    prepare_adjusted_text,
     render_clean_text,
 )
 from tts_engine import (
@@ -67,6 +68,7 @@ logging.basicConfig(level=logging.INFO)
 LOGGER = logging.getLogger("chatterbox_app")
 
 BASE_DIR = Path(__file__).resolve().parent
+LEXIQUE_PATH = BASE_DIR / "lexique_tts_fr.json"
 
 SAFE_PREVIEW_DIR = BASE_DIR / "output"
 SAFE_PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
@@ -274,11 +276,87 @@ def update_estimated_duration(
     return f"Durée estimée (avec pauses): {est:.1f}s"
 
 
+def format_adjustment_log(changes: list[str], enabled: bool) -> str:
+    if not enabled:
+        return ""
+    if not changes:
+        return "Aucune correction."
+    ordered: list[str] = []
+    ordered.extend([c for c in changes if c.startswith("paste_norm_applied:")])
+    ordered.extend([c for c in changes if c.startswith("paste_norm_counts:")])
+    ordered.extend([c for c in changes if c.startswith("sigle_undot:")])
+    ordered.extend([c for c in changes if c.startswith("lexicon_hit:")])
+    ordered.extend([c for c in changes if c.startswith("sigle_auto:")])
+    lines = "\n".join(f"- {entry}" for entry in ordered)
+    return f"**Corrections appliquées**\n{lines}"
+
+
+def summarize_adjustment_changes(changes: list[str], log_text: str | None, verbose_logs: bool) -> str | None:
+    if not changes:
+        return log_text
+    paste_entry = next((c for c in changes if c.startswith("paste_norm_applied:")), None)
+    counts_entry = next((c for c in changes if c.startswith("paste_norm_counts:")), None)
+    if paste_entry:
+        log_text = append_ui_log(paste_entry.replace(": ", "="), log_text, verbose=True, enabled=verbose_logs)
+    if counts_entry:
+        log_text = append_ui_log(counts_entry.replace(": ", "="), log_text, verbose=True, enabled=verbose_logs)
+
+    def _collect(prefix: str) -> list[str]:
+        return [c[len(prefix) + 1 :].strip() for c in changes if c.startswith(f"{prefix}:")]
+
+    for prefix in ("sigle_undot", "lexicon_hit", "sigle_auto"):
+        items = _collect(prefix)
+        if items:
+            examples = "; ".join(items[:3])
+            log_text = append_ui_log(
+                f"{prefix}_count={len(items)} examples={examples}",
+                log_text,
+                verbose=True,
+                enabled=verbose_logs,
+            )
+    return log_text
+
+
+def handle_text_adjustment(
+    text: str,
+    auto_adjust: bool,
+    show_adjust_log: bool,
+    comma_pause_ms: int,
+    period_pause_ms: int,
+    semicolon_pause_ms: int,
+    colon_pause_ms: int,
+    dash_pause_ms: int,
+    newline_pause_ms: int,
+):
+    persist_state(
+        {
+            "last_auto_adjust": bool(auto_adjust),
+            "last_show_adjust_log": bool(show_adjust_log),
+        }
+    )
+    if auto_adjust:
+        adjusted_text, changes = prepare_adjusted_text(text or "", LEXIQUE_PATH)
+    else:
+        adjusted_text, changes = text or "", []
+    clean_preview = render_clean_text(adjusted_text)
+    duration = update_estimated_duration(
+        adjusted_text,
+        comma_pause_ms=int(comma_pause_ms),
+        period_pause_ms=int(period_pause_ms),
+        semicolon_pause_ms=int(semicolon_pause_ms),
+        colon_pause_ms=int(colon_pause_ms),
+        dash_pause_ms=int(dash_pause_ms),
+        newline_pause_ms=int(newline_pause_ms),
+    )
+    log_md = format_adjustment_log(changes, show_adjust_log and auto_adjust)
+    return adjusted_text, clean_preview, duration, log_md
+
+
 def handle_load_preset(
     preset_name: str | None,
     log_text: str | None,
 ):
-    outputs = [gr.update() for _ in range(26)]
+    outputs = [gr.update() for _ in range(27)]
     name_update = gr.update()
     chunk_status = "Etat: non appliqué"
     chunk_state = {"applied": False, "chunks": [], "signature": None}
@@ -325,6 +403,7 @@ def handle_load_preset(
             value=int(data.get("max_words_without_terminator", DEFAULT_MAX_WORDS_WITHOUT_TERMINATOR))
         ),
         gr.update(value=float(data.get("max_est_seconds_per_chunk", DEFAULT_MAX_EST_SECONDS_PER_CHUNK))),
+        gr.update(value=bool(data.get("disable_newline_chunking", False))),
         gr.update(value=bool(data.get("verbose_logs", False))),
         gr.update(value=_coerce_float(data.get("exaggeration"), 0.5)),
         gr.update(value=_coerce_float(data.get("cfg_weight"), 0.6)),
@@ -360,6 +439,7 @@ def handle_save_preset(
     min_words_per_chunk: int,
     max_words_without_terminator: int,
     max_est_seconds_per_chunk: float,
+    disable_newline_chunking: bool,
     verbose_logs: bool,
     exaggeration: float,
     cfg_weight: float,
@@ -392,6 +472,7 @@ def handle_save_preset(
         "min_words_per_chunk": int(min_words_per_chunk),
         "max_words_without_terminator": int(max_words_without_terminator),
         "max_est_seconds_per_chunk": float(max_est_seconds_per_chunk),
+        "disable_newline_chunking": bool(disable_newline_chunking),
         "verbose_logs": bool(verbose_logs),
         "exaggeration": float(exaggeration),
         "cfg_weight": float(cfg_weight),
@@ -460,6 +541,7 @@ def handle_reset_chunk_defaults(log_text: str | None):
         gr.update(value=DEFAULT_MIN_WORDS_PER_CHUNK),
         gr.update(value=DEFAULT_MAX_WORDS_WITHOUT_TERMINATOR),
         gr.update(value=DEFAULT_MAX_EST_SECONDS_PER_CHUNK),
+        gr.update(value=False),
         log_text,
     )
 
@@ -495,12 +577,14 @@ def _chunk_signature(
     min_words_per_chunk: int,
     max_words_without_terminator: int,
     max_est_seconds_per_chunk: float,
+    disable_newline_chunking: bool,
 ) -> tuple:
     return (
         text.strip(),
         int(min_words_per_chunk),
         int(max_words_without_terminator),
         float(max_est_seconds_per_chunk),
+        bool(disable_newline_chunking),
     )
 
 
@@ -544,21 +628,30 @@ def _append_chunk_warning_logs(chunks, log_text: str | None, verbose_logs: bool)
 
 def handle_apply_prechunk(
     text: str,
+    adjusted_text: str,
+    auto_adjust: bool,
     min_words_per_chunk: int,
     max_words_without_terminator: int,
     max_est_seconds_per_chunk: float,
+    disable_newline_chunking: bool,
     chunk_state: dict | None,
     log_text: str | None,
     verbose_logs: bool,
 ):
     if not text or not text.strip():
         return "", "Etat: non appliqué", {"applied": False, "chunks": [], "signature": None}, log_text
-    normalized_text = normalize_text(text)
+    if auto_adjust:
+        adjusted_text, changes = prepare_adjusted_text(text or "", LEXIQUE_PATH)
+        log_text = summarize_adjustment_changes(changes, log_text, verbose_logs)
+    else:
+        adjusted_text = adjusted_text or text or ""
+    normalized_text = normalize_text(adjusted_text or "")
     chunks = chunk_script(
         normalized_text,
         min_words_per_chunk=int(min_words_per_chunk),
         max_words_without_terminator=int(max_words_without_terminator),
         max_est_seconds_per_chunk=float(max_est_seconds_per_chunk),
+        split_on_newline=not disable_newline_chunking,
     )
     if not chunks:
         log_text = append_ui_log("Aucun chunk généré.", log_text)
@@ -570,6 +663,7 @@ def handle_apply_prechunk(
         min_words_per_chunk,
         max_words_without_terminator,
         max_est_seconds_per_chunk,
+        disable_newline_chunking,
     )
     state = {"applied": True, "chunks": chunks, "signature": signature}
     log_text = append_ui_log("Pré-chunking appliqué.", log_text)
@@ -586,6 +680,8 @@ def mark_chunk_dirty(chunk_state: dict | None):
 
 def handle_generate(
     text: str,
+    adjusted_text: str,
+    auto_adjust: bool,
     ref_name: str | None,
     out_dir: str | None,
     user_filename: str | None,
@@ -602,6 +698,7 @@ def handle_generate(
     min_words_per_chunk: int,
     max_words_without_terminator: int,
     max_est_seconds_per_chunk: float,
+    disable_newline_chunking: bool,
     verbose_logs: bool,
     exaggeration: float,
     cfg_weight: float,
@@ -616,9 +713,15 @@ def handle_generate(
 ):
     if not text or not text.strip():
         state = chunk_state or {"applied": False, "chunks": [], "signature": None}
-        return None, "", "", "Etat: non appliqué", state, append_log("Erreur: texte vide.", log_text)
+        return "", None, "", "", "Etat: non appliqué", state, append_log("Erreur: texte vide.", log_text)
 
     log_text = append_ui_log("Initialisation de la génération...", log_text)
+
+    if auto_adjust:
+        adjusted_text, changes = prepare_adjusted_text(text or "", LEXIQUE_PATH)
+        log_text = summarize_adjustment_changes(changes, log_text, verbose_logs)
+    else:
+        adjusted_text = adjusted_text or text or ""
 
     audio_prompt = None
     if ref_name:
@@ -626,11 +729,15 @@ def handle_generate(
             audio_prompt = resolve_ref_path(ref_name)
         except FileNotFoundError:
             log_text = append_ui_log(f"Référence introuvable: {ref_name}", log_text)
-            return None, "", "", log_text
+            return adjusted_text, None, "", "", "Etat: non appliqué", chunk_state, log_text
 
-    normalized_text = normalize_text(text)
-    if normalized_text != text and verbose_logs:
-        before = len(re.findall(r"\bII\b", text))
+    text_used = adjusted_text
+    if auto_adjust:
+        assert text_used == adjusted_text
+
+    normalized_text = normalize_text(text_used)
+    if normalized_text != text_used and verbose_logs:
+        before = len(re.findall(r"\bII\b", text_used))
         after = len(re.findall(r"\bII\b", normalized_text))
         ii_fix = max(before - after, 0)
         detail = f"II->Il x{ii_fix}" if ii_fix else "whitespace/ponctuation"
@@ -699,6 +806,7 @@ def handle_generate(
         min_words_per_chunk,
         max_words_without_terminator,
         max_est_seconds_per_chunk,
+        disable_newline_chunking,
     )
     applied = bool(chunk_state and chunk_state.get("applied"))
     same_signature = bool(chunk_state and chunk_state.get("signature") == signature)
@@ -709,6 +817,7 @@ def handle_generate(
             min_words_per_chunk=int(min_words_per_chunk),
             max_words_without_terminator=int(max_words_without_terminator),
             max_est_seconds_per_chunk=float(max_est_seconds_per_chunk),
+            split_on_newline=not disable_newline_chunking,
         )
         chunk_preview_text = _build_chunk_preview(chunks)
         log_text = _append_chunk_warning_logs(chunks, log_text, verbose_logs)
@@ -722,6 +831,7 @@ def handle_generate(
     if not chunks:
         state = {"applied": False, "chunks": [], "signature": None}
         return (
+            adjusted_text,
             None,
             "",
             chunk_preview_text,
@@ -797,7 +907,7 @@ def handle_generate(
             log_text = append_ui_log(f"Erreur TTS: {result.get('error')}", log_text)
         else:
             log_text = append_ui_log("Annulé.", log_text)
-        return None, "", chunk_preview_text, chunk_status, chunk_state, log_text
+        return adjusted_text, None, "", chunk_preview_text, chunk_status, chunk_state, log_text
 
     meta = result.get("meta", {})
     preview_path_obj = Path(preview_path)
@@ -808,12 +918,12 @@ def handle_generate(
         else:
             _reset_job_state()
             log_text = append_ui_log("Annulé.", log_text)
-            return None, "", chunk_preview_text, chunk_status, chunk_state, log_text
+            return adjusted_text, None, "", chunk_preview_text, chunk_status, chunk_state, log_text
     except Exception as exc:
         _cleanup_tmp(str(tmp_path))
         _reset_job_state()
         log_text = append_ui_log(f"Erreur TTS: {exc}", log_text)
-        return None, "", chunk_preview_text, chunk_status, chunk_state, log_text
+        return adjusted_text, None, "", chunk_preview_text, chunk_status, chunk_state, log_text
 
     for idx, duration in enumerate(meta.get("durations", []), start=1):
         retry_flag = meta.get("retries", [])[idx - 1] if meta.get("retries") else False
@@ -888,6 +998,7 @@ def handle_generate(
             "last_min_words_per_chunk": int(min_words_per_chunk),
             "last_max_words_without_terminator": int(max_words_without_terminator),
             "last_max_est_seconds_per_chunk": float(max_est_seconds_per_chunk),
+            "last_disable_newline_chunking": bool(disable_newline_chunking),
             "last_verbose_logs": bool(verbose_logs),
             "last_tts_model_mode": str(tts_model_mode),
             "last_tts_language": str(tts_language),
@@ -896,6 +1007,7 @@ def handle_generate(
     )
     log_text = append_ui_log(f"Fichier pré-écoute: {preview_path_obj}", log_text)
     return (
+        adjusted_text,
         str(preview_path_obj),
         str(user_path_obj),
         chunk_preview_text,
@@ -989,6 +1101,7 @@ def handle_save_preset_confirm(
     min_words_per_chunk: int,
     max_words_without_terminator: int,
     max_est_seconds_per_chunk: float,
+    disable_newline_chunking: bool,
     verbose_logs: bool,
     exaggeration: float,
     cfg_weight: float,
@@ -1039,6 +1152,7 @@ def handle_save_preset_confirm(
         min_words_per_chunk,
         max_words_without_terminator,
         max_est_seconds_per_chunk,
+        disable_newline_chunking,
         verbose_logs,
         exaggeration,
         cfg_weight,
@@ -1177,6 +1291,14 @@ def build_ui() -> gr.Blocks:
     default_max_est_seconds = float(
         _state_or_preset("max_est_seconds_per_chunk", DEFAULT_MAX_EST_SECONDS_PER_CHUNK)
     )
+    default_auto_adjust = _coerce_bool(state_data.get("last_auto_adjust"), True)
+    default_show_adjust_log = _coerce_bool(state_data.get("last_show_adjust_log"), False)
+    default_disable_newline_chunking = _coerce_bool(
+        state_data.get("last_disable_newline_chunking")
+        if "last_disable_newline_chunking" in state_data
+        else base_preset.get("disable_newline_chunking"),
+        False,
+    )
     default_verbose_logs = _coerce_bool(state_data.get("last_verbose_logs"), False)
     default_tts_model_mode = state_data.get("last_tts_model_mode") or _state_or_preset(
         "tts_model_mode", "fr_finetune"
@@ -1305,6 +1427,23 @@ def build_ui() -> gr.Blocks:
                 show_label=False,
             )
             with gr.Row():
+                auto_adjust_toggle = gr.Checkbox(
+                    label="Auto-ajustement",
+                    value=default_auto_adjust,
+                )
+                show_adjust_log_toggle = gr.Checkbox(
+                    label="Afficher log",
+                    value=default_show_adjust_log,
+                )
+            adjusted_text_box = gr.Textbox(
+                label="Texte ajusté",
+                lines=3,
+                max_lines=16,
+                interactive=False,
+                placeholder="Le texte ajusté pour le TTS apparaîtra ici...",
+            )
+            adjust_log_box = gr.Markdown("", elem_classes=["inline-info"])
+            with gr.Row():
                 target_duration = gr.Number(label="Durée cible (s)", value=None, precision=1, show_label=False)
                 adjust_btn = gr.Button("Ajuster le texte")
                 apply_btn = gr.Button("Utiliser la suggestion")
@@ -1423,7 +1562,7 @@ def build_ui() -> gr.Blocks:
                     )
                     max_est_seconds_slider = gr.Slider(
                         4.0,
-                        20.0,
+                        30.0,
                         value=default_max_est_seconds,
                         step=0.5,
                         label="Durée max/chunk (s)",
@@ -1434,6 +1573,10 @@ def build_ui() -> gr.Blocks:
                     verbose_logs_toggle = gr.Checkbox(
                         label="Logs détaillés",
                         value=default_verbose_logs,
+                    )
+                    disable_newline_chunking_toggle = gr.Checkbox(
+                        label="Désactiver découpe auto sur retour ligne",
+                        value=default_disable_newline_chunking,
                     )
                 chunk_status = gr.Markdown("Etat: non appliqué")
                 chunk_preview_box = gr.Textbox(
@@ -1558,11 +1701,12 @@ def build_ui() -> gr.Blocks:
             outputs=[adjusted_preview, adjust_info, logs_box],
         )
         apply_btn.click(fn=apply_adjusted, inputs=adjusted_preview, outputs=text_input)
-        text_input.change(fn=update_clean_preview, inputs=text_input, outputs=clean_text_box)
         text_input.change(
-            fn=update_estimated_duration,
+            fn=handle_text_adjustment,
             inputs=[
                 text_input,
+                auto_adjust_toggle,
+                show_adjust_log_toggle,
                 comma_pause_slider,
                 period_pause_slider,
                 semicolon_pause_slider,
@@ -1570,12 +1714,57 @@ def build_ui() -> gr.Blocks:
                 dash_pause_slider,
                 newline_pause_slider,
             ],
-            outputs=duration_preview,
+            outputs=[
+                adjusted_text_box,
+                clean_text_box,
+                duration_preview,
+                adjust_log_box,
+            ],
+        )
+        auto_adjust_toggle.change(
+            fn=handle_text_adjustment,
+            inputs=[
+                text_input,
+                auto_adjust_toggle,
+                show_adjust_log_toggle,
+                comma_pause_slider,
+                period_pause_slider,
+                semicolon_pause_slider,
+                colon_pause_slider,
+                dash_pause_slider,
+                newline_pause_slider,
+            ],
+            outputs=[
+                adjusted_text_box,
+                clean_text_box,
+                duration_preview,
+                adjust_log_box,
+            ],
+        )
+        show_adjust_log_toggle.change(
+            fn=handle_text_adjustment,
+            inputs=[
+                text_input,
+                auto_adjust_toggle,
+                show_adjust_log_toggle,
+                comma_pause_slider,
+                period_pause_slider,
+                semicolon_pause_slider,
+                colon_pause_slider,
+                dash_pause_slider,
+                newline_pause_slider,
+            ],
+            outputs=[
+                adjusted_text_box,
+                clean_text_box,
+                duration_preview,
+                adjust_log_box,
+            ],
         )
         comma_pause_slider.change(
             fn=update_estimated_duration,
             inputs=[
-                text_input,
+                adjusted_text_box,
                 comma_pause_slider,
                 period_pause_slider,
                 semicolon_pause_slider,
@@ -1588,7 +1777,7 @@ def build_ui() -> gr.Blocks:
         period_pause_slider.change(
             fn=update_estimated_duration,
             inputs=[
-                text_input,
+                adjusted_text_box,
                 comma_pause_slider,
                 period_pause_slider,
                 semicolon_pause_slider,
@@ -1601,7 +1790,7 @@ def build_ui() -> gr.Blocks:
         semicolon_pause_slider.change(
             fn=update_estimated_duration,
             inputs=[
-                text_input,
+                adjusted_text_box,
                 comma_pause_slider,
                 period_pause_slider,
                 semicolon_pause_slider,
@@ -1614,7 +1803,7 @@ def build_ui() -> gr.Blocks:
         colon_pause_slider.change(
             fn=update_estimated_duration,
             inputs=[
-                text_input,
+                adjusted_text_box,
                 comma_pause_slider,
                 period_pause_slider,
                 semicolon_pause_slider,
@@ -1627,7 +1816,7 @@ def build_ui() -> gr.Blocks:
         dash_pause_slider.change(
             fn=update_estimated_duration,
             inputs=[
-                text_input,
+                adjusted_text_box,
                 comma_pause_slider,
                 period_pause_slider,
                 semicolon_pause_slider,
@@ -1640,7 +1829,7 @@ def build_ui() -> gr.Blocks:
         newline_pause_slider.change(
             fn=update_estimated_duration,
             inputs=[
-                text_input,
+                adjusted_text_box,
                 comma_pause_slider,
                 period_pause_slider,
                 semicolon_pause_slider,
@@ -1665,6 +1854,11 @@ def build_ui() -> gr.Blocks:
             inputs=[chunk_state],
             outputs=[chunk_state, chunk_status],
         )
+        auto_adjust_toggle.change(
+            fn=mark_chunk_dirty,
+            inputs=[chunk_state],
+            outputs=[chunk_state, chunk_status],
+        )
         min_words_slider.change(
             fn=mark_chunk_dirty,
             inputs=[chunk_state],
@@ -1676,6 +1870,11 @@ def build_ui() -> gr.Blocks:
             outputs=[chunk_state, chunk_status],
         )
         max_est_seconds_slider.change(
+            fn=mark_chunk_dirty,
+            inputs=[chunk_state],
+            outputs=[chunk_state, chunk_status],
+        )
+        disable_newline_chunking_toggle.change(
             fn=mark_chunk_dirty,
             inputs=[chunk_state],
             outputs=[chunk_state, chunk_status],
@@ -1693,6 +1892,7 @@ def build_ui() -> gr.Blocks:
                 min_words_slider,
                 max_words_without_term_slider,
                 max_est_seconds_slider,
+                disable_newline_chunking_toggle,
                 logs_box,
             ],
         )
@@ -1705,9 +1905,12 @@ def build_ui() -> gr.Blocks:
             fn=handle_apply_prechunk,
             inputs=[
                 text_input,
+                adjusted_text_box,
+                auto_adjust_toggle,
                 min_words_slider,
                 max_words_without_term_slider,
                 max_est_seconds_slider,
+                disable_newline_chunking_toggle,
                 chunk_state,
                 logs_box,
                 verbose_logs_toggle,
@@ -1734,6 +1937,7 @@ def build_ui() -> gr.Blocks:
                 min_words_slider,
                 max_words_without_term_slider,
                 max_est_seconds_slider,
+                disable_newline_chunking_toggle,
                 verbose_logs_toggle,
                 exaggeration_slider,
                 cfg_slider,
@@ -1770,6 +1974,7 @@ def build_ui() -> gr.Blocks:
                 min_words_slider,
                 max_words_without_term_slider,
                 max_est_seconds_slider,
+                disable_newline_chunking_toggle,
                 verbose_logs_toggle,
                 exaggeration_slider,
                 cfg_slider,
@@ -1821,6 +2026,8 @@ def build_ui() -> gr.Blocks:
             fn=handle_generate,
             inputs=[
                 text_input,
+                adjusted_text_box,
+                auto_adjust_toggle,
                 ref_dropdown,
                 output_dir_box,
                 filename_box,
@@ -1837,6 +2044,7 @@ def build_ui() -> gr.Blocks:
                 min_words_slider,
                 max_words_without_term_slider,
                 max_est_seconds_slider,
+                disable_newline_chunking_toggle,
                 verbose_logs_toggle,
                 exaggeration_slider,
                 cfg_slider,
@@ -1850,6 +2058,7 @@ def build_ui() -> gr.Blocks:
                 logs_box,
             ],
             outputs=[
+                adjusted_text_box,
                 result_audio,
                 output_path_box,
                 chunk_preview_box,

@@ -1,0 +1,39 @@
+{
+  "meta": {
+    "lang": "fr",
+    "engine": "chatterbox"
+  },
+  "exceptions": {
+    "MJC": "èmjicé",
+    "CNC": "céainecé",
+    "USB4": "uèssbéquatre"
+  },
+  "letters": {
+    "A": "a",
+    "B": "bé",
+    "C": "cé",
+    "D": "dé",
+    "E": "heu",
+    "F": "èf",
+    "G": "jé",
+    "H": "ache",
+    "I": "i",
+    "J": "ji",
+    "K": "ka",
+    "L": "èl",
+    "M": "èm",
+    "N": "ène",
+    "O": "o",
+    "P": "pé",
+    "Q": "ku",
+    "R": "èr",
+    "S": "ès",
+    "T": "té",
+    "U": "u",
+    "V": "vé",
+    "W": "doublevé",
+    "X": "iks",
+    "Y": "igrec",
+    "Z": "zède"
+  }
+}

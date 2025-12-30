@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, List, Sequence
+from typing import Callable, Dict, Iterable, List, Sequence, Tuple
 
 import numpy as np
 
@@ -30,6 +32,7 @@ DEFAULT_MAX_WORDS_WITHOUT_TERMINATOR = 35
 PIVOT_WORDS = {"Cependant", "Pourtant", "Or", "Alors", "Néanmoins", "Toutefois"}
 TERMINATOR_CHARS = (".", "!", "?")
 FALLBACK_PUNCTUATION = (":", ";", "—", "-", ",")
+LEXIQUE_CACHE: Dict[str, Dict] = {}
 DETERMINERS = {
     "le",
     "la",
@@ -108,6 +111,105 @@ def normalize_text(text: str) -> str:
         lines.append(line)
     normalized = "\n".join(lines)
     return normalized.strip()
+
+
+def load_lexique_json(path: str | Path) -> Dict:
+    cache_key = str(path)
+    if cache_key in LEXIQUE_CACHE:
+        return LEXIQUE_CACHE[cache_key]
+    try:
+        with Path(path).expanduser().open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        data = {}
+    except json.JSONDecodeError:
+        data = {}
+    LEXIQUE_CACHE[cache_key] = data
+    return data
+
+
+def normalize_paste_fr(text: str) -> Tuple[str, List[str]]:
+    if text is None:
+        return "", ["paste_norm_applied: false"]
+    original = text
+    content = text.replace("\r\n", "\n").replace("\r", "\n")
+    content, nbsp_count = re.subn(r"[\u00A0\u202F\u2007]", " ", content)
+    content, space_count = re.subn(r"[ \t]+", " ", content)
+    content, ellipsis_count = re.subn(r"\.{3,}", "…", content)
+    content, double_dot_count = re.subn(r"(?<!\.)\.\.(?!\.)", ".", content)
+    content, space_before_count = re.subn(r"\s+([,.;:!?])", r"\1", content)
+    content, space_after_count = re.subn(r'([,.;:!?])(?=[^\s»”"])', r"\1 ", content)
+    content, newline_count = re.subn(r"\n{3,}", "\n\n", content)
+    content = content.strip()
+
+    changes: List[str] = []
+    paste_changed = content != original
+    changes.append(f"paste_norm_applied: {str(paste_changed).lower()}")
+    if paste_changed:
+        changes.append(
+            "paste_norm_counts: "
+            f"nbsp={nbsp_count}, spaces={space_count}, "
+            f"ellipsis={ellipsis_count}, double_dot={double_dot_count}, "
+            f"space_before_punct={space_before_count}, space_after_punct={space_after_count}, "
+            f"newlines={newline_count}"
+        )
+    return content, changes
+
+
+def normalize_for_chatterbox(text: str, lex: Dict) -> Tuple[str, List[str]]:
+    if not text:
+        return "", []
+    exceptions = lex.get("exceptions", {}) if lex else {}
+    letters = lex.get("letters", {}) if lex else {}
+    changes: List[str] = []
+
+    def undot(match: re.Match) -> str:
+        original = match.group(0)
+        compact = re.sub(r"[.\s]+", "", original)
+        if compact != original:
+            changes.append(f"sigle_undot: {original} -> {compact}")
+        return compact
+
+    undot_pattern = re.compile(r"(?:[A-Z]\.\s*){2,10}")
+    content = undot_pattern.sub(undot, text)
+
+    for key, replacement in exceptions.items():
+        pattern = re.compile(rf"\b{re.escape(key)}\b")
+        content, count = pattern.subn(replacement, content)
+        if count:
+            changes.append(f"lexicon_hit: {key} -> {replacement}")
+
+    auto_hits: Dict[str, int] = {}
+
+    def replace_sigle(match: re.Match) -> str:
+        token = match.group(0)
+        if token in exceptions:
+            return token
+        if any(ch.isdigit() for ch in token):
+            return token
+        pieces = []
+        for ch in token:
+            rep = letters.get(ch)
+            if rep is None:
+                return token
+            pieces.append(rep)
+        replacement = "".join(pieces)
+        auto_hits[token] = auto_hits.get(token, 0) + 1
+        return replacement
+
+    auto_pattern = re.compile(r"\b[A-Z]{2,6}\b")
+    content = auto_pattern.sub(replace_sigle, content)
+    for token, _count in auto_hits.items():
+        assembled = "".join(letters.get(ch, "") for ch in token)
+        changes.append(f"sigle_auto: {token} -> {assembled}")
+    return content, changes
+
+
+def prepare_adjusted_text(user_text: str, lex_path: str | Path) -> Tuple[str, List[str]]:
+    text1, changes1 = normalize_paste_fr(user_text)
+    lex = load_lexique_json(lex_path)
+    text2, changes2 = normalize_for_chatterbox(text1, lex)
+    return text2, changes1 + changes2
 
 
 def count_words(text: str) -> int:
@@ -521,6 +623,7 @@ def chunk_script(
     min_words_per_chunk: int = DEFAULT_MIN_WORDS_PER_CHUNK,
     max_words_without_terminator: int = DEFAULT_MAX_WORDS_WITHOUT_TERMINATOR,
     max_est_seconds_per_chunk: float = DEFAULT_MAX_EST_SECONDS_PER_CHUNK,
+    split_on_newline: bool = True,
 ) -> List[ChunkInfo]:
     cleaned = normalize_text(script)
     if not cleaned:
@@ -584,7 +687,7 @@ def chunk_script(
         elif token in TERMINATOR_CHARS:
             last_terminator_idx = len(buffer) - 1
             words_since_terminator = 0
-        if token == "\n":
+        if token == "\n" and split_on_newline:
             if word_count >= min_words_per_chunk:
                 finalize_chunk(len(buffer) - 1, "newline", "newline", warnings_current)
                 continue
@@ -996,6 +1099,10 @@ __all__ = [
     "ensure_strong_ending",
     "compute_inter_chunk_pause_ms",
     "get_trailing_silence_ms",
+    "load_lexique_json",
+    "normalize_paste_fr",
+    "normalize_for_chatterbox",
+    "prepare_adjusted_text",
     "normalize_whitespace",
     "count_words",
     "normalize_text",

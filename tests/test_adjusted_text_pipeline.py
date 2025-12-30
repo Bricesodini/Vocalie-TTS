@@ -1,12 +1,13 @@
 from pathlib import Path
-
 import queue
+
 import pytest
 
 import app
+from text_tools import chunk_script as real_chunk_script
 
 
-def test_auto_apply_before_generate(monkeypatch, tmp_path):
+def test_handle_generate_uses_adjusted_text(monkeypatch, tmp_path):
     def fake_worker(payload, result_queue):
         out_path = Path(payload["out_path"])
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -48,13 +49,22 @@ def test_auto_apply_before_generate(monkeypatch, tmp_path):
         def Process(self, target, args):
             return DummyProcess(target, args)
 
+    captured = {}
+
+    def spy_chunk_script(script, **kwargs):
+        captured["script"] = script
+        return real_chunk_script(script, **kwargs)
+
     monkeypatch.setattr(app, "_generate_longform_worker", fake_worker)
     monkeypatch.setattr(app.mp, "get_context", lambda *_args, **_kwargs: DummyContext())
+    monkeypatch.setattr(app, "prepare_adjusted_text", lambda *_args, **_kwargs: ("Texte Ajuste", []))
+    monkeypatch.setattr(app, "chunk_script", spy_chunk_script)
+
     chunk_state = {"applied": False, "chunks": [], "signature": None}
-    result = app.handle_generate(
-        text="Bonjour\nMerci beaucoup",
-        adjusted_text="Bonjour\nMerci beaucoup",
-        auto_adjust=False,
+    app.handle_generate(
+        text="RAW",
+        adjusted_text="RAW",
+        auto_adjust=True,
         ref_name=None,
         out_dir=str(tmp_path),
         user_filename="test",
@@ -84,8 +94,5 @@ def test_auto_apply_before_generate(monkeypatch, tmp_path):
         chunk_state=chunk_state,
         log_text=None,
     )
-    _, _, _, chunk_preview, chunk_status, updated_state, log_text = result
-    assert "auto_apply_before_generate" in log_text
-    assert chunk_status == "Etat: appliqué"
-    assert updated_state["applied"] is True
-    assert chunk_preview
+    assert captured.get("script") == "Texte Ajuste"
+

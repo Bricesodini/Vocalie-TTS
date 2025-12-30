@@ -15,6 +15,17 @@ def test_chunker_newline_split():
     assert chunks[0].reason == "newline"
 
 
+def test_chunker_disable_newline_split():
+    text = "Une ligne courte mais correcte\nUne autre ligne pour tester"
+    chunks = chunk_script(
+        text,
+        min_words_per_chunk=2,
+        max_words_without_terminator=40,
+        split_on_newline=False,
+    )
+    assert len(chunks) == 1
+
+
 def test_chunker_min_words_blocks_split():
     text = "Bonjour\nMerci beaucoup"
     chunks = chunk_script(
