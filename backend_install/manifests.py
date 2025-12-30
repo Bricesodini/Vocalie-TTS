@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
@@ -21,8 +22,18 @@ class BackendManifest:
 MANIFESTS: Dict[str, BackendManifest] = {
     "xtts": BackendManifest(
         engine_id="xtts",
-        python="python3.11",
-        pip_packages=["TTS", "soundfile", "scipy", "numpy<2.4"],
+        python=sys.executable,
+        pip_packages=[
+            "TTS==0.22.0",
+            "torch==2.2.2",
+            "torchaudio==2.2.2",
+            "transformers==4.39.3",
+            "huggingface_hub<1.0",
+            "sentencepiece",
+            "soundfile",
+            "scipy",
+            "numpy<2.4",
+        ],
         system_hints=["ffmpeg (recommandé)"],
         import_probes=["TTS"],
         post_install_checks=[["-c", "import TTS; print('OK')"]],

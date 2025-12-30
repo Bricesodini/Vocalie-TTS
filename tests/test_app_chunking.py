@@ -61,6 +61,7 @@ def test_auto_apply_before_generate(monkeypatch, tmp_path):
         str(tmp_path),
         "test",
         False,
+        False,
         "chatterbox",
         "fr-FR",
         200,

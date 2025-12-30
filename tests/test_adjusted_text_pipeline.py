@@ -71,6 +71,7 @@ def test_handle_generate_uses_adjusted_text(monkeypatch, tmp_path):
         str(tmp_path),
         "test",
         False,
+        False,
         "chatterbox",
         "fr-FR",
         200,

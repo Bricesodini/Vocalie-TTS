@@ -40,6 +40,22 @@ def sanitize_filename(name: str | None, max_length: int = MAX_FILENAME_LENGTH) -
     return result[:max_length]
 
 
+def get_engine_slug(engine_id: str, engine_meta: dict | None = None) -> str:
+    engine_meta = engine_meta or {}
+    if engine_id == "chatterbox":
+        mode = engine_meta.get("chatterbox_mode")
+        if mode:
+            return slugify(f"chatterbox_{mode}", fallback="chatterbox")
+        return "chatterbox"
+    if engine_id == "xtts":
+        return "xtts_v2"
+    if engine_id == "piper":
+        return "piper"
+    if engine_id == "bark":
+        return "bark"
+    return slugify(engine_id, fallback="tts")
+
+
 def make_output_filename(
     text: str,
     ref_name: str | None,
@@ -47,6 +63,8 @@ def make_output_filename(
     add_timestamp: bool = True,
     timestamp: str | None = None,
     ext: str = "wav",
+    include_engine_slug: bool = False,
+    engine_slug: str | None = None,
 ) -> str:
     """Return a sanitized file name based on user input or text/ref fallbacks."""
 
@@ -58,6 +76,9 @@ def make_output_filename(
         base = user_base
     else:
         base = f"{slugify(text)}__{slugify(ref_name or 'ref')}"
+
+    if include_engine_slug and engine_slug:
+        base = f"{base}__{sanitize_filename(engine_slug)}"
 
     if add_timestamp:
         base = f"{base}__{timestamp}"
@@ -101,6 +122,7 @@ __all__ = [
     "FORBIDDEN_CHARS",
     "MAX_FILENAME_LENGTH",
     "ensure_unique_path",
+    "get_engine_slug",
     "make_output_filename",
     "prepare_output_paths",
     "sanitize_filename",

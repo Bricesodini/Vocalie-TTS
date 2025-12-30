@@ -1,17 +1,25 @@
 # 🎙️ Vocalie-TTS
 
-Interface Gradio locale pour piloter le modèle **Chatterbox TTS** avec le model Chatterbox Multilingue ou le fine-tune français `Thomcles/Chatterbox-TTS-French`.
-
 ## Présentation
 
-Vocalie-TTS est une interface de production audio locale pensée pour la
-voix off : génération rapide, pré-écoute immédiate, presets réutilisables et
-gestion fine des pauses. La génération est isolée dans un process séparé pour
-permettre un arrêt immédiat (STOP) sans corrompre les sorties. Un traitement
-audio optionnel (fade + zero-cross + détection de silences) réduit les pops
-aux coupes.
+Vocalie-TTS est une interface de production audio locale pensée pour la voix off et la narration :
+génération rapide, pré-écoute immédiate, presets réutilisables et gestion fine des pauses.
 
-Vocalie-TTS s’adresse aux créateurs audio/vidéo (voix off, narration, podcast) qui veulent produire **localement** des rendus **stables** et **contrôlables**, sans dépendance cloud, avec un pipeline de préparation/assemblage pensé pour un usage "production".
+La génération est isolée dans un process séparé, permettant un arrêt immédiat (STOP) sans corrompre les sorties audio.
+Un traitement audio optionnel (fade, zero-crossing, détection de silences) permet de réduire les pops et artefacts aux coupes, afin de produire des fichiers directement exploitables.
+
+Vocalie-TTS s’adresse aux créateurs audio et vidéo (voix off, narration, podcast, audiovisuel) qui souhaitent produire localement des rendus stables, contrôlables et répétables, sans dépendance cloud, avec un pipeline de préparation et d’assemblage pensé pour un usage production.
+
+## Architecture
+
+Interface Gradio locale de synthèse vocale (TTS) permettant de piloter plusieurs moteurs open-source à travers une interface unifiée, avec un focus particulier sur une utilisation fluide en français sous macOS.
+
+Moteurs pris en charge
+• Chatterbox TTS
+(modèle multilingue ou fine-tune français Thomcles/Chatterbox-TTS-French)
+• Piper
+• XTTS
+• Bark
 
 ### Choix du moteur TTS
 
@@ -62,6 +70,16 @@ Piper nécessite des **voix** (assets) en plus du moteur (venv).
 - Catalogue : https://huggingface.co/rhasspy/piper-voices/tree/main
 - Installation manuelle : déposer `ma_voix.onnx` et `ma_voix.onnx.json` dans `./.assets/piper/voices/` (sous-dossiers acceptés), puis cliquer **Refresh voix** dans l’UI.
 
+### XTTS v2 (voice cloning)
+
+XTTS est un moteur de **voice cloning** (empreinte vocale) qui nécessite une **référence audio**.
+
+- Installation : bouton **Installer** dans l’UI (venv dédié `./.venvs/xtts`, aucune dépendance dans le venv principal).
+- Modèle : pré‑download lors de l’installation (cache dans `./.assets/xtts/` via `TTS_HOME`).
+- Langues : multilingue avec **fr-FR** par défaut si disponible.
+- Paramètres exposés : **Vitesse** (si supportée par la version XTTS installée).
+- Limites : génération plus lente sur CPU ; MPS (Apple Silicon) est tenté automatiquement.
+
 Pensée pour les créatifs audiovisuels :
 
 - sélection d’une **référence voix**
@@ -96,6 +114,13 @@ Au premier lancement, les poids Hugging Face sont téléchargés et mis en cache
 - macOS (Apple Silicon recommandé, backend MPS pris en charge)
 - Python 3.11
 - Accès à internet uniquement lors du premier lancement (téléchargement des poids Hugging Face)
+- **ffmpeg** (recommandé, requis pour XTTS si la référence audio n’est pas en WAV)
+
+Installation rapide (macOS) :
+
+```bash
+brew install ffmpeg
+```
 
 ### Dépendances Python
 

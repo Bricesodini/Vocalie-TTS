@@ -255,6 +255,8 @@ def run_tts_pipeline(request: dict) -> PipelineResult:
     join_count = 0
     segments_count_total = 0
     punct_tokens: list[tuple[str, int]] = []
+    backend_meta_last: dict[str, Any] = {}
+    backend_logs: list[str] = []
 
     for idx, chunk_info in enumerate(chunks, start=1):
         chunk_segments = list(chunk_info.segments)
@@ -294,6 +296,14 @@ def run_tts_pipeline(request: dict) -> PipelineResult:
                 meta = result[2]
             elif isinstance(result, dict):
                 meta = result.get("meta") if isinstance(result.get("meta"), dict) else {}
+            if meta:
+                backend_meta_last = dict(meta)
+                stdout = meta.get("stdout")
+                stderr = meta.get("stderr")
+                if stdout:
+                    backend_logs.append(f"stdout: {stdout}")
+                if stderr:
+                    backend_logs.append(f"stderr: {stderr}")
             audio, sr = _coerce_audio_result(result, default_sr=target_sr)
             if sr is None:
                 sr = target_sr
@@ -397,6 +407,8 @@ def run_tts_pipeline(request: dict) -> PipelineResult:
         "segments_count_total": segments_count_total,
         "join_count": join_count,
         "punct_tokens": punct_tokens,
+        "backend_meta": backend_meta_last,
+        "backend_logs": backend_logs,
         "warnings": [],
     }
     return PipelineResult(out_path=out_path, meta=meta)

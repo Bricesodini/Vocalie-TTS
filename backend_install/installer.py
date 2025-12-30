@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from typing import List, Tuple
 
 from .manifests import get_manifest
-from .paths import pip_path, python_path, venv_dir
+from .paths import pip_path, python_path, venv_dir, ROOT
 
 
 def _stamp(message: str) -> str:
@@ -26,6 +27,32 @@ def pip_install(engine_id: str, packages: List[str]) -> None:
     subprocess.run([str(pip), "install", *packages], check=True)
 
 
+def _run_xtts_prefetch(engine_id: str) -> Tuple[bool, str]:
+    py = python_path(engine_id)
+    if not py.exists():
+        return False, "python introuvable dans le venv"
+    runner = ROOT / "tts_backends" / "xtts_prefetch.py"
+    if not runner.exists():
+        return False, "runner xtts_prefetch.py introuvable"
+    env = dict(**os.environ)
+    env["TTS_HOME"] = str(ROOT / ".assets" / "xtts")
+    env["COQUI_TOS_AGREED"] = "1"
+    env["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+    result = subprocess.run(
+        [str(py), str(runner)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    output = "\n".join(
+        [line for line in (result.stdout or "").splitlines() if line.strip()]
+        + [line for line in (result.stderr or "").splitlines() if line.strip()]
+    ).strip()
+    if result.returncode != 0:
+        return False, output or "prefetch failed"
+    return True, output or "prefetch ok"
+
+
 def run_install(engine_id: str) -> Tuple[bool, List[str]]:
     logs: List[str] = []
     manifest = get_manifest(engine_id)
@@ -39,6 +66,13 @@ def run_install(engine_id: str) -> Tuple[bool, List[str]]:
         for check in manifest.post_install_checks:
             logs.append(_stamp(f"Check: {' '.join(check)}"))
             subprocess.run([str(python_path(engine_id)), *check], check=True)
+        if engine_id == "xtts":
+            logs.append(_stamp("Téléchargement des poids XTTS..."))
+            ok, output = _run_xtts_prefetch(engine_id)
+            if ok:
+                logs.append(_stamp("Poids XTTS OK (cache)."))
+            else:
+                logs.append(_stamp(f"⚠️ Préchargement XTTS échoué: {output}"))
         logs.append(_stamp("Installation terminée."))
         return True, logs
     except subprocess.CalledProcessError as exc:

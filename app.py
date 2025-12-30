@@ -7,6 +7,7 @@ import dataclasses
 import logging
 import multiprocessing as mp
 import os
+import platform
 import queue
 import re
 import shutil
@@ -21,7 +22,7 @@ from typing import Optional
 import gradio as gr
 
 from logging_utils import set_verbosity
-from output_paths import make_output_filename, prepare_output_paths
+from output_paths import get_engine_slug, make_output_filename, prepare_output_paths
 from refs import (
     ALLOWED_EXTENSIONS,
     DEFAULT_REF_DIR,
@@ -65,6 +66,7 @@ from tts_backends.piper_assets import (
     list_piper_voices,
     piper_voice_supports_length_scale,
 )
+from tts_backends.xtts_backend import XTTS_ASSETS_DIR
 from tts_backends.base import BackendUnavailableError, coerce_language, pick_default_language
 from tts_engine import (
     FADE_MS,
@@ -326,6 +328,8 @@ def load_engine_config(container: dict, engine_id: str) -> tuple[str, str | None
 def engine_status_markdown(engine_id: str) -> str:
     status = backend_status(engine_id)
     if status.get("installed"):
+        if engine_id == "xtts" and not status.get("model_downloaded", True):
+            return "Statut moteur: ⚠️ Poids XTTS non préchargés (téléchargement au premier usage)"
         return f"Statut moteur: ✅ Installé ({status.get('reason')})"
     return f"Statut moteur: ❌ Non installé ({status.get('reason')})"
 
@@ -828,7 +832,7 @@ def handle_load_preset(
     preset_name: str | None,
     log_text: str | None,
 ):
-    outputs = [gr.update() for _ in range(39 + len(all_param_keys()))]
+    outputs = [gr.update() for _ in range(40 + len(all_param_keys()))]
     name_update = gr.update()
     chunk_status = "Etat: non appliqué"
     chunk_state = {"applied": False, "chunks": [], "signature": None}
@@ -880,6 +884,12 @@ def handle_load_preset(
     warning_md = language_warning(engine_id, language, final_lang, did_fallback)
     if voice_fallback:
         warning_md = "\n".join(filter(None, [warning_md, voice_fallback]))
+    if engine_id == "xtts":
+        xtts_status = backend_status("xtts")
+        if xtts_status.get("installed") and not xtts_status.get("model_downloaded", True):
+            warning_md = "\n".join(
+                filter(None, [warning_md, "XTTS: poids non préchargés, téléchargement au premier usage."])
+            )
     warning_update = gr.update(value=warning_md, visible=bool(warning_md))
     piper_status_update = gr.update(
         value=piper_voice_status_text(voices),
@@ -896,6 +906,7 @@ def handle_load_preset(
         gr.update(value=data.get("out_dir") or str(DEFAULT_OUTPUT_DIR)),
         gr.update(value=data.get("user_filename", "")),
         gr.update(value=bool(data.get("add_timestamp", True))),
+        gr.update(value=bool(data.get("include_model_name", False))),
         gr.update(value=engine_id),
         lang_update,
         lang_locked_update,
@@ -935,6 +946,7 @@ def handle_load_preset(
         {
             "last_preset": preset_name,
             "last_tts_engine": engine_id,
+            "last_include_model_name": bool(data.get("include_model_name", False)),
         }
     )
     persist_engine_state(engine_id, language=final_lang, voice_id=final_voice, params=engine_params)
@@ -948,6 +960,7 @@ def handle_save_preset(
     out_dir: str | None,
     user_filename: str | None,
     add_timestamp: bool,
+    include_model_name: bool,
     tts_language: str | None,
     tts_engine: str,
     comma_pause_ms: int,
@@ -981,6 +994,7 @@ def handle_save_preset(
         "user_filename": user_filename or "",
         "add_timestamp": bool(add_timestamp),
         "tts_engine": str(tts_engine),
+        "include_model_name": bool(include_model_name),
         "engines": {
             str(tts_engine): {
                 "language": str(tts_language or "fr-FR"),
@@ -1121,6 +1135,23 @@ def handle_engine_change(
     if engine_id == "piper" and not voices:
         warning_md = "\n".join(
             filter(None, [warning_md, "Aucune voix Piper installée. Installez une voix FR recommandée."])
+        )
+    if engine_id == "xtts":
+        xtts_status = backend_status("xtts")
+        warning_md = "\n".join(
+            filter(
+                None,
+                [
+                    warning_md,
+                    "XTTS: usage non commercial (licence CPML).",
+                    "XTTS: CPU forcé sur macOS (limitation torchaudio/MPS)."
+                    if platform.system() == "Darwin" and platform.machine() in {"arm64", "aarch64"}
+                    else "",
+                    "XTTS: poids non préchargés, téléchargement au premier usage."
+                    if xtts_status.get("installed") and not xtts_status.get("model_downloaded", True)
+                    else "",
+                ],
+            )
         )
     warning_update = gr.update(value=warning_md, visible=bool(warning_md))
     piper_status_update = gr.update(
@@ -1391,6 +1422,7 @@ def handle_generate(
     out_dir: str | None,
     user_filename: str | None,
     add_timestamp: bool,
+    include_model_name: bool,
     tts_engine: str,
     tts_language: str | None,
     comma_pause_ms: int,
@@ -1417,6 +1449,17 @@ def handle_generate(
         return "", None, "", "", "Etat: non appliqué", state, append_log("Erreur: texte vide.", log_text)
 
     log_text = append_ui_log("Initialisation de la génération...", log_text)
+    if tts_engine == "xtts":
+        xtts_log_path = str(XTTS_ASSETS_DIR / ".tmp" / "xtts_runner.log")
+        log_text = append_ui_log(
+            f"XTTS logs: {xtts_log_path} (tail -f pendant le download)",
+            log_text,
+        )
+        if platform.system() == "Darwin" and platform.machine() in {"arm64", "aarch64"}:
+            log_text = append_ui_log(
+                "XTTS forcé en CPU sur macOS (limitation torchaudio/MPS ComplexFloat).",
+                log_text,
+            )
 
     if auto_adjust:
         adjusted_text, changes = prepare_adjusted_text(text or "", LEXIQUE_PATH)
@@ -1444,12 +1487,15 @@ def handle_generate(
 
     output_dir = ensure_output_dir(out_dir)
     timestamp = dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    engine_slug = get_engine_slug(tts_engine, {"chatterbox_mode": chatterbox_mode})
     filename = make_output_filename(
         text=normalized_text,
         ref_name=ref_name,
         user_filename=user_filename,
         add_timestamp=bool(add_timestamp),
         timestamp=timestamp,
+        include_engine_slug=bool(include_model_name),
+        engine_slug=engine_slug,
     )
     preview_path, user_path = prepare_output_paths(SAFE_PREVIEW_DIR, output_dir, filename)
     clean_preview = render_clean_text(normalized_text)
@@ -1483,7 +1529,7 @@ def handle_generate(
     tts_language, did_fallback = coerce_language(
         tts_language,
         supported,
-        backend.default_language if backend else None,
+        backend.default_language() if backend else None,
     )
     if did_fallback:
         log_text = append_ui_log(
@@ -1514,6 +1560,10 @@ def handle_generate(
             return adjusted_text, None, "", "", "Etat: non appliqué", chunk_state, log_text
     elif ref_name and not backend.supports_ref_audio:
         log_text = append_ui_log("Référence ignorée (backend sans voice ref).", log_text)
+    if backend.id == "xtts" and not audio_prompt:
+        log_text = append_ui_log("XTTS nécessite une référence vocale.", log_text)
+        state = chunk_state or {"applied": False, "chunks": [], "signature": None}
+        return adjusted_text, None, "", "", "Etat: non appliqué", state, log_text
 
     warnings = backend.validate_config(
         {
@@ -1710,10 +1760,29 @@ def handle_generate(
         return adjusted_text, None, "", chunk_preview_text, chunk_status, chunk_state, log_text
 
     meta = result.get("meta", {})
+    backend_meta = meta.get("backend_meta") or {}
     if meta.get("piper_voice"):
         log_text = append_ui_log(f"piper_voice={meta.get('piper_voice')}", log_text)
     if meta.get("piper_model_path"):
         log_text = append_ui_log(f"piper_model_path={meta.get('piper_model_path')}", log_text)
+    if tts_engine == "xtts":
+        if backend_meta.get("device"):
+            log_text = append_ui_log(f"xtts_device={backend_meta.get('device')}", log_text)
+        if backend_meta.get("model_id"):
+            log_text = append_ui_log(f"xtts_model_id={backend_meta.get('model_id')}", log_text)
+        if backend_meta.get("forced_cpu"):
+            log_text = append_ui_log(
+                "XTTS forced to CPU on macOS due to torchaudio complex dtype on MPS.",
+                log_text,
+            )
+        backend_logs = meta.get("backend_logs") or []
+        if backend_logs:
+            logs_text = "\n".join(backend_logs)
+            if len(logs_text) > 2000:
+                logs_text = f"{logs_text[:2000]}...\n(truncated)"
+            log_text = append_ui_log(f"xtts_logs:\n{logs_text}", log_text)
+        if backend_meta.get("log_path"):
+            log_text = append_ui_log(f"xtts_log_path={backend_meta.get('log_path')}", log_text)
     if verbose_logs and meta.get("backend_cmd"):
         log_text = append_ui_log(f"backend_cmd={meta.get('backend_cmd')}", log_text, verbose=True, enabled=True)
     preview_path_obj = Path(preview_path)
@@ -1823,6 +1892,7 @@ def handle_generate(
             "last_out_dir": output_dir,
             "last_user_filename": user_filename or "",
             "last_add_timestamp": bool(add_timestamp),
+            "last_include_model_name": bool(include_model_name),
             "last_comma_pause_ms": int(comma_pause_ms),
             "last_period_pause_ms": int(period_pause_ms),
             "last_semicolon_pause_ms": int(semicolon_pause_ms),
@@ -1922,6 +1992,7 @@ def handle_save_preset_confirm(
     out_dir: str | None,
     user_filename: str | None,
     add_timestamp: bool,
+    include_model_name: bool,
     tts_language: str | None,
     tts_engine: str,
     comma_pause_ms: int,
@@ -1969,6 +2040,7 @@ def handle_save_preset_confirm(
         out_dir,
         user_filename,
         add_timestamp,
+        include_model_name,
         tts_language,
         tts_engine,
         comma_pause_ms,
@@ -2101,6 +2173,12 @@ def build_ui() -> gr.Blocks:
     default_out_dir_value = state_data.get("last_out_dir") or str(DEFAULT_OUTPUT_DIR)
     default_user_filename = state_data.get("last_user_filename", "")
     default_add_timestamp = _coerce_bool(state_data.get("last_add_timestamp"), True)
+    default_include_model_name = _coerce_bool(
+        state_data.get("last_include_model_name")
+        if "last_include_model_name" in state_data
+        else base_preset.get("include_model_name"),
+        False,
+    )
     default_comma_pause = int(_state_or_preset("comma_pause_ms", DEFAULT_COMMA_PAUSE_MS))
     default_period_pause = int(_state_or_preset("period_pause_ms", DEFAULT_PERIOD_PAUSE_MS))
     default_semicolon_pause = int(_state_or_preset("semicolon_pause_ms", DEFAULT_SEMICOLON_PAUSE_MS))
@@ -2597,6 +2675,10 @@ def build_ui() -> gr.Blocks:
                     label="Ajouter timestamp",
                     value=default_add_timestamp,
                 )
+                include_model_toggle = gr.Checkbox(
+                    label="Inclure nom du modèle",
+                    value=default_include_model_name,
+                )
             with gr.Row():
                 generate_btn = gr.Button(
                     "Générer",
@@ -2967,6 +3049,7 @@ def build_ui() -> gr.Blocks:
                 output_dir_box,
                 filename_box,
                 timestamp_toggle,
+                include_model_toggle,
                 engine_dropdown,
                 language_dropdown,
                 lang_locked_md,
@@ -3012,6 +3095,7 @@ def build_ui() -> gr.Blocks:
                 output_dir_box,
                 filename_box,
                 timestamp_toggle,
+                include_model_toggle,
                 language_dropdown,
                 engine_dropdown,
                 comma_pause_slider,
@@ -3078,6 +3162,7 @@ def build_ui() -> gr.Blocks:
                 output_dir_box,
                 filename_box,
                 timestamp_toggle,
+                include_model_toggle,
                 engine_dropdown,
                 language_dropdown,
                 comma_pause_slider,

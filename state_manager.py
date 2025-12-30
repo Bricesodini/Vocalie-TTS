@@ -84,6 +84,7 @@ def ensure_default_presets() -> None:
             "max_est_seconds_per_chunk": 10.0,
             "disable_newline_chunking": False,
             "tts_engine": "chatterbox",
+            "include_model_name": False,
             "comma_pause_ms": 200,
             "period_pause_ms": 350,
             "semicolon_pause_ms": 300,
@@ -119,6 +120,7 @@ def ensure_default_presets() -> None:
             "max_est_seconds_per_chunk": 9.0,
             "disable_newline_chunking": False,
             "tts_engine": "chatterbox",
+            "include_model_name": False,
             "engines": {
                 "chatterbox": {
                     "language": "fr-FR",
@@ -148,6 +150,7 @@ def ensure_default_presets() -> None:
             "max_est_seconds_per_chunk": 12.0,
             "disable_newline_chunking": False,
             "tts_engine": "chatterbox",
+            "include_model_name": False,
             "engines": {
                 "chatterbox": {
                     "language": "fr-FR",
@@ -172,6 +175,8 @@ def load_preset(name: str) -> Dict:
         return data
     if "tts_engine" not in data:
         data["tts_engine"] = "chatterbox"
+    if "include_model_name" not in data:
+        data["include_model_name"] = False
     engines = data.get("engines")
     if not isinstance(engines, dict):
         engines = {}
