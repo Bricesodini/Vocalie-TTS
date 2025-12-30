@@ -893,4 +893,63 @@ __all__ = [
     "FADE_MS",
     "SILENCE_THRESHOLD",
     "SILENCE_MIN_MS",
+    "post_process_audio_file",
 ]
+
+
+def post_process_audio_file(
+    path: str,
+    *,
+    zero_cross_radius_ms: int = ZERO_CROSS_RADIUS_MS,
+    fade_ms: int = FADE_MS,
+    silence_threshold: float = SILENCE_THRESHOLD,
+    silence_min_ms: int = SILENCE_MIN_MS,
+) -> bool:
+    try:
+        audio, sr = sf.read(path, dtype="float32")
+    except Exception as exc:
+        LOGGER.warning("post_process_failed_read: %s", exc)
+        return False
+    if getattr(audio, "size", 0) == 0:
+        LOGGER.warning("post_process_empty_audio")
+        return False
+
+    def _process_channel(channel: np.ndarray) -> np.ndarray:
+        processed = _start_at_zero_and_fade_in(
+            channel,
+            sr,
+            radius_ms=int(zero_cross_radius_ms),
+            fade_ms=int(fade_ms),
+        )
+        processed = _trim_to_zero_and_fade_out(
+            processed,
+            sr,
+            radius_ms=int(zero_cross_radius_ms),
+            fade_ms=int(fade_ms),
+        )
+        return _apply_silence_edge_fades(
+            processed,
+            sr,
+            float(silence_threshold),
+            int(silence_min_ms),
+            int(fade_ms),
+        )
+
+    if audio.ndim == 1:
+        processed = _process_channel(audio)
+    else:
+        channels = []
+        for idx in range(audio.shape[1]):
+            channels.append(_process_channel(audio[:, idx]))
+        min_len = min(len(ch) for ch in channels) if channels else 0
+        if min_len == 0:
+            LOGGER.warning("post_process_empty_audio")
+            return False
+        processed = np.stack([ch[:min_len] for ch in channels], axis=1)
+
+    try:
+        sf.write(path, processed, sr)
+    except Exception as exc:
+        LOGGER.warning("post_process_failed_write: %s", exc)
+        return False
+    return True

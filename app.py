@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import dataclasses
 import logging
 import multiprocessing as mp
 import os
@@ -47,6 +48,8 @@ from text_tools import (
     DEFAULT_NEWLINE_PAUSE_MS,
     DEFAULT_PERIOD_PAUSE_MS,
     DEFAULT_SEMICOLON_PAUSE_MS,
+    ChunkInfo,
+    SpeechSegment,
     adjust_text_to_duration,
     chunk_script,
     estimate_duration_with_pauses,
@@ -54,14 +57,23 @@ from text_tools import (
     prepare_adjusted_text,
     render_clean_text,
 )
+from backend_install.installer import run_install
+from backend_install.status import backend_status
+from tts_backends import get_backend, list_backends
+from tts_backends.piper_assets import (
+    ensure_default_voice_installed,
+    list_piper_voices,
+    piper_voice_supports_length_scale,
+)
+from tts_backends.base import BackendUnavailableError, coerce_language, pick_default_language
 from tts_engine import (
     FADE_MS,
-    LANGUAGE_MAP,
     SILENCE_MIN_MS,
     SILENCE_THRESHOLD,
     TTSEngine,
     ZERO_CROSS_RADIUS_MS,
 )
+from tts_pipeline import build_pause_plan, run_tts_pipeline
 
 
 logging.basicConfig(level=logging.INFO)
@@ -91,16 +103,442 @@ _JOB_STATE = {
     "current_final_path": None,
     "job_running": False,
 }
-LANGUAGE_CHOICES = [
-    ("Français (fr-FR)", "fr-FR"),
-    ("English US (en-US)", "en-US"),
-    ("English UK (en-GB)", "en-GB"),
-    ("Español (es-ES)", "es-ES"),
-    ("Deutsch (de-DE)", "de-DE"),
-    ("Italiano (it-IT)", "it-IT"),
-    ("Português (pt-PT)", "pt-PT"),
-    ("Nederlands (nl-NL)", "nl-NL"),
-]
+LANGUAGE_LABELS = {
+    "fr-FR": "Français (fr-FR)",
+    "en-US": "English US (en-US)",
+    "en-GB": "English UK (en-GB)",
+    "es-ES": "Español (es-ES)",
+    "de-DE": "Deutsch (de-DE)",
+    "it-IT": "Italiano (it-IT)",
+    "pt-PT": "Português (pt-PT)",
+    "nl-NL": "Nederlands (nl-NL)",
+}
+
+
+def backend_choices() -> list[tuple[str, str]]:
+    choices: list[tuple[str, str]] = []
+    for backend in list_backends():
+        label = backend.display_name
+        if not backend.is_available():
+            label = f"{label} (indisponible)"
+        choices.append((label, backend.id))
+    return choices
+
+
+def backend_ref_note(backend) -> str:
+    if backend is None:
+        return "Moteur indisponible."
+    if backend.uses_internal_voices:
+        return "Référence vocale désactivée (moteur à voix internes)."
+    if not backend.supports_ref_audio:
+        return "Référence vocale non supportée par ce moteur."
+    return ""
+
+
+def _param_schema_cache():
+    engine_schemas = {}
+    all_keys = []
+    for backend in list_backends():
+        schema = backend.params_schema()
+        engine_schemas[backend.id] = schema
+        for key in schema:
+            if key not in all_keys:
+                all_keys.append(key)
+    return engine_schemas, all_keys
+
+
+def _param_spec_catalog() -> dict:
+    engine_schemas, _ = _param_schema_cache()
+    catalog: dict = {}
+    for schema in engine_schemas.values():
+        for key, spec in schema.items():
+            if key not in catalog:
+                catalog[key] = spec
+    return catalog
+
+
+def _ordered_languages(supported: list[str]) -> list[str]:
+    if not supported:
+        return ["fr-FR"]
+    if "fr-FR" in supported:
+        return ["fr-FR"] + [lang for lang in supported if lang != "fr-FR"]
+    return list(supported)
+
+
+def language_choices(supported: list[str]) -> list[tuple[str, str]]:
+    ordered = _ordered_languages(supported)
+    return [(LANGUAGE_LABELS.get(code, code), code) for code in ordered]
+
+
+def coerce_param_value(spec, value):
+    if spec.type == "bool":
+        return bool(value) if isinstance(value, bool) else bool(spec.default)
+    if spec.type == "int":
+        try:
+            coerced = int(float(value))
+        except (TypeError, ValueError):
+            coerced = int(spec.default)
+        if spec.min is not None:
+            coerced = max(int(spec.min), coerced)
+        if spec.max is not None:
+            coerced = min(int(spec.max), coerced)
+        return coerced
+    if spec.type == "float":
+        try:
+            coerced = float(value)
+        except (TypeError, ValueError):
+            coerced = float(spec.default)
+        if spec.min is not None:
+            coerced = max(float(spec.min), coerced)
+        if spec.max is not None:
+            coerced = min(float(spec.max), coerced)
+        return coerced
+    if spec.type in {"choice", "select"}:
+        choices = spec.choices or []
+        values = []
+        for item in choices:
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                values.append(item[1])
+            else:
+                values.append(item)
+        return value if value in values else spec.default
+    if spec.type == "str":
+        return str(value) if value is not None else str(spec.default or "")
+    return value if value is not None else spec.default
+
+
+def spec_visible(spec, context: dict) -> bool:
+    if not spec.visible_if:
+        return True
+    for key, expected in spec.visible_if.items():
+        if key == "voice_count_min":
+            if context.get("voice_count", 0) < int(expected):
+                return False
+            continue
+        if context.get(key) != expected:
+            return False
+    return True
+
+
+def engine_param_schema(engine_id: str) -> dict:
+    schemas, _ = _param_schema_cache()
+    return schemas.get(engine_id, {})
+
+
+def all_param_keys() -> list[str]:
+    _, keys = _param_schema_cache()
+    return list(keys)
+
+
+def build_param_updates(engine_id: str, engine_params: dict, context: dict) -> list[dict]:
+    schema = engine_param_schema(engine_id)
+    updates: list[dict] = []
+    for key in all_param_keys():
+        spec = schema.get(key)
+        if spec is None:
+            updates.append(gr.update(visible=False))
+            continue
+        value = coerce_param_value(spec, engine_params.get(key, spec.default))
+        visible = spec_visible(spec, context)
+        if spec.type in {"choice", "select"}:
+            updates.append(
+                gr.update(
+                    value=value,
+                    visible=visible,
+                    interactive=visible,
+                    choices=spec.choices or [],
+                )
+            )
+        else:
+            updates.append(gr.update(value=value, visible=visible, interactive=visible))
+    return updates
+
+
+def build_param_visibility_updates(engine_id: str, context: dict) -> list[dict]:
+    schema = engine_param_schema(engine_id)
+    updates: list[dict] = []
+    for key in all_param_keys():
+        spec = schema.get(key)
+        if spec is None:
+            updates.append(gr.update(visible=False))
+            continue
+        visible = spec_visible(spec, context)
+        updates.append(gr.update(visible=visible, interactive=visible))
+    return updates
+
+
+def collect_engine_params(engine_id: str, values: dict) -> dict:
+    schema = engine_param_schema(engine_id)
+    params: dict = {}
+    for key, spec in schema.items():
+        params[key] = coerce_param_value(spec, values.get(key, spec.default))
+    return params
+
+
+def create_param_widget(spec, value, visible):
+    label = spec.label or spec.key
+    info = spec.help or None
+    if spec.type in {"float", "int"}:
+        if spec.min is None or spec.max is None or spec.step is None:
+            return gr.Number(label=label, value=value, visible=visible, interactive=visible)
+        return gr.Slider(
+            spec.min,
+            spec.max,
+            value=value,
+            step=spec.step,
+            label=label,
+            info=info,
+            visible=visible,
+            interactive=visible,
+        )
+    if spec.type in {"choice", "select"}:
+        return gr.Dropdown(
+            label=label,
+            choices=spec.choices or [],
+            value=value,
+            visible=visible,
+            interactive=visible,
+        )
+    if spec.type == "bool":
+        return gr.Checkbox(
+            label=label,
+            value=bool(value),
+            visible=visible,
+            interactive=visible,
+        )
+    return gr.Textbox(
+        label=label,
+        value=str(value) if value is not None else "",
+        visible=visible,
+        interactive=visible,
+    )
+
+
+def load_engine_config(container: dict, engine_id: str) -> tuple[str, str | None, dict]:
+    engines = container.get("engines", {})
+    engine_data = engines.get(engine_id, {}) if isinstance(engines, dict) else {}
+    language = engine_data.get("language") or "fr-FR"
+    voice_id = engine_data.get("voice_id")
+    params = engine_data.get("params") or {}
+    return language, voice_id, params
+
+
+def engine_status_markdown(engine_id: str) -> str:
+    status = backend_status(engine_id)
+    if status.get("installed"):
+        return f"Statut moteur: ✅ Installé ({status.get('reason')})"
+    return f"Statut moteur: ❌ Non installé ({status.get('reason')})"
+
+
+def supported_languages_for(engine_id: str, backend, chatterbox_mode: str) -> list[str]:
+    if backend is None:
+        return ["fr-FR"]
+    if engine_id == "chatterbox":
+        if chatterbox_mode == "fr_finetune":
+            return ["fr-FR"]
+        return backend.supported_languages() or ["fr-FR"]
+    return backend.supported_languages() or ["fr-FR"]
+
+
+def language_ui_updates(
+    engine_id: str,
+    backend,
+    chatterbox_mode: str,
+    requested_language: str | None,
+    voice_id: str | None = None,
+):
+    supported = supported_languages_for(engine_id, backend, chatterbox_mode)
+    locked_reason = ""
+    if backend and backend.uses_internal_voices:
+        voices = backend.list_voices()
+        voice_langs = None
+        for voice in voices:
+            if voice.id == voice_id and voice.lang_codes:
+                voice_langs = voice.lang_codes
+                break
+        if voice_langs:
+            supported = voice_langs
+            locked_reason = " (verrouillée par la voix sélectionnée)"
+    final_lang, did_fallback = coerce_language(
+        requested_language or "fr-FR",
+        supported,
+        backend.default_language() if backend else None,
+    )
+    supports_select = (
+        len(supported) > 1
+        and bool(backend and backend.supports_multilang)
+        and not (backend and backend.uses_internal_voices)
+    )
+    lang_update = gr.update(
+        value=final_lang,
+        visible=supports_select,
+        interactive=supports_select,
+        choices=language_choices(supported) if supports_select else None,
+    )
+    locked_text = ""
+    if not supports_select:
+        locked_text = f"Langue : {final_lang} (verrouillée{locked_reason})"
+    locked_update = gr.update(value=locked_text, visible=not supports_select)
+    return final_lang, did_fallback, lang_update, locked_update
+
+
+def build_voice_label_update(engine_id: str, backend, requested_voice: str | None):
+    if backend is None or not backend.uses_internal_voices:
+        return None, gr.update(value="", visible=False), ""
+    voices = backend.list_voices()
+    voice_ids = [voice.id for voice in voices]
+    fallback_note = ""
+    final_voice = requested_voice if requested_voice in voice_ids else (voice_ids[0] if voice_ids else None)
+    if requested_voice and final_voice != requested_voice:
+        fallback_note = f"tts_voice_fallback requested={requested_voice} -> {final_voice} (engine={engine_id})"
+    if len(voices) == 0:
+        return final_voice, gr.update(value="⚠️ Aucune voix Piper installée", visible=True), fallback_note
+    return final_voice, gr.update(value="", visible=False), fallback_note
+
+
+def piper_speed_note_update(engine_id: str, voice_id: str | None, supports_speed: bool) -> dict:
+    if engine_id != "piper" or not voice_id or supports_speed:
+        return gr.update(value="", visible=False)
+    return gr.update(value="Vitesse non supportée par cette voix", visible=True)
+
+
+def language_warning(engine_id: str, requested: str, final: str, did_fallback: bool) -> str:
+    if not did_fallback:
+        return ""
+    stamp = dt.datetime.now().strftime("%H:%M:%S")
+    return f"[{stamp}] tts_language_fallback requested={requested} -> {final} (engine={engine_id})"
+
+
+def piper_voice_status_text(voices) -> str:
+    if not voices:
+        return "⚠️ Aucune voix Piper installée"
+    return f"✅ {len(voices)} voix Piper installée(s)"
+
+
+def refresh_piper_voices() -> tuple:
+    logs = []
+    voices = list_piper_voices()
+    backend = get_backend("piper")
+    engine_params = {"voice_id": voices[0].id if voices else None}
+    supports_speed = bool(
+        engine_params.get("voice_id") and piper_voice_supports_length_scale(engine_params.get("voice_id"))
+    )
+    context = {
+        "chatterbox_mode": "fr_finetune",
+        "supports_ref_audio": False,
+        "uses_internal_voices": True,
+        "voice_count": len(voices),
+        "piper_supports_speed": supports_speed,
+    }
+    param_updates = build_param_updates("piper", engine_params, context)
+    if "voice_id" in all_param_keys():
+        idx = all_param_keys().index("voice_id")
+        choices = [(voice.label, voice.id) for voice in voices]
+        param_updates[idx] = gr.update(
+            value=engine_params.get("voice_id"),
+            visible=bool(len(choices) >= 1),
+            interactive=bool(len(choices) >= 1),
+            choices=choices,
+        )
+    _, voice_label_update, _ = build_voice_label_update("piper", backend, engine_params.get("voice_id"))
+    status_update = gr.update(value=piper_voice_status_text(voices), visible=True)
+    speed_note_update = piper_speed_note_update(
+        "piper", engine_params.get("voice_id"), supports_speed
+    )
+    warning_update = gr.update(value="\n".join(logs), visible=bool(logs))
+    logs_update = gr.update(value="\n".join(logs))
+    return (
+        *param_updates,
+        voice_label_update,
+        status_update,
+        speed_note_update,
+        warning_update,
+        logs_update,
+    )
+
+
+def install_default_piper_voice() -> tuple:
+    result = ensure_default_voice_installed()
+    logs = []
+    if result.ok:
+        logs.append("✅ Voix FR installée.")
+    elif result.message:
+        logs.append(f"⚠️ Install voix FR: {result.message}")
+    voices = list_piper_voices()
+    backend = get_backend("piper")
+    engine_params = {"voice_id": voices[0].id if voices else None}
+    supports_speed = bool(
+        engine_params.get("voice_id") and piper_voice_supports_length_scale(engine_params.get("voice_id"))
+    )
+    context = {
+        "chatterbox_mode": "fr_finetune",
+        "supports_ref_audio": False,
+        "uses_internal_voices": True,
+        "voice_count": len(voices),
+        "piper_supports_speed": supports_speed,
+    }
+    param_updates = build_param_updates("piper", engine_params, context)
+    if "voice_id" in all_param_keys():
+        idx = all_param_keys().index("voice_id")
+        choices = [(voice.label, voice.id) for voice in voices]
+        param_updates[idx] = gr.update(
+            value=engine_params.get("voice_id"),
+            visible=bool(len(choices) >= 1),
+            interactive=bool(len(choices) >= 1),
+            choices=choices,
+        )
+    _, voice_label_update, _ = build_voice_label_update("piper", backend, engine_params.get("voice_id"))
+    status_update = gr.update(value=piper_voice_status_text(voices), visible=True)
+    speed_note_update = piper_speed_note_update(
+        "piper", engine_params.get("voice_id"), supports_speed
+    )
+    warning_update = gr.update(value="\n".join(logs), visible=bool(logs))
+    logs_update = gr.update(value="\n".join(logs))
+    return (
+        *param_updates,
+        voice_label_update,
+        status_update,
+        speed_note_update,
+        warning_update,
+        logs_update,
+    )
+
+
+def engine_status_updates(engine_id: str):
+    status = backend_status(engine_id)
+    installed = bool(status.get("installed"))
+    status_md = gr.update(value=engine_status_markdown(engine_id))
+    install_btn = gr.update(visible=not installed, interactive=not installed)
+    uninstall_btn = gr.update(visible=installed and engine_id != "chatterbox", interactive=installed)
+    generate_btn = gr.update(interactive=installed)
+    return status_md, install_btn, uninstall_btn, generate_btn
+
+
+def _serialize_chunks(chunks: list[ChunkInfo]) -> list[dict]:
+    return [dataclasses.asdict(chunk) for chunk in chunks]
+
+
+def _deserialize_chunks(chunks: list[dict]) -> list[ChunkInfo]:
+    rebuilt = []
+    for chunk in chunks:
+        segments = [SpeechSegment(**seg) for seg in chunk.get("segments", [])]
+        rebuilt.append(
+            ChunkInfo(
+                segments=segments,
+                sentence_count=chunk.get("sentence_count", 0),
+                char_count=chunk.get("char_count", 0),
+                word_count=chunk.get("word_count", 0),
+                comma_count=chunk.get("comma_count", 0),
+                estimated_duration=chunk.get("estimated_duration", 0.0),
+                reason=chunk.get("reason"),
+                boundary_kind=chunk.get("boundary_kind"),
+                pivot=chunk.get("pivot", False),
+                ends_with_suspended=chunk.get("ends_with_suspended", False),
+                oversize_sentence=chunk.get("oversize_sentence", False),
+                warnings=chunk.get("warnings", []),
+            )
+        )
+    return rebuilt
 
 
 def mac_choose_folder(initial_dir: str | None = None) -> str | None:
@@ -170,9 +608,24 @@ def _terminate_proc(proc: mp.Process | None, timeout: float = 0.8) -> None:
 
 def _generate_longform_worker(payload: dict, result_queue: mp.Queue) -> None:
     try:
-        engine = TTSEngine()
-        _, _, meta = engine.generate_longform(**payload)
+        backend_id = payload.pop("tts_backend")
+        if "audio_prompt_path" in payload and "voice_ref_path" not in payload:
+            payload["voice_ref_path"] = payload.pop("audio_prompt_path")
+        if isinstance(payload.get("chunks"), list):
+            if payload["chunks"] and isinstance(payload["chunks"][0], dict):
+                payload["chunks"] = _deserialize_chunks(payload["chunks"])
+        request = dict(payload)
+        request["tts_backend"] = backend_id
+        meta = run_tts_pipeline(request).meta
+        meta.setdefault("warnings", [])
+        meta.setdefault("backend_id", backend_id)
+        meta.setdefault("backend_lang", payload.get("lang"))
+        meta.setdefault("chunks", len(payload.get("chunks") or []))
+        meta.setdefault("durations", [])
+        meta.setdefault("total_duration", 0.0)
         result_queue.put({"status": "ok", "meta": meta})
+    except BackendUnavailableError as exc:
+        result_queue.put({"status": "unavailable", "error": str(exc)})
     except Exception as exc:
         result_queue.put({"status": "error", "error": str(exc)})
 
@@ -199,6 +652,25 @@ def _coerce_bool(value, default: bool) -> bool:
 def persist_state(update: dict) -> None:
     state = load_state()
     state.update(update)
+    save_state(state)
+
+
+def persist_engine_state(engine_id: str, language: str | None = None, voice_id: str | None = None, params: dict | None = None) -> None:
+    state = load_state()
+    engines = state.get("engines")
+    if not isinstance(engines, dict):
+        engines = {}
+    engine_cfg = engines.get(engine_id)
+    if not isinstance(engine_cfg, dict):
+        engine_cfg = {}
+    if language is not None:
+        engine_cfg["language"] = language
+    if voice_id is not None:
+        engine_cfg["voice_id"] = voice_id
+    if params is not None:
+        engine_cfg["params"] = params
+    engines[engine_id] = engine_cfg
+    state["engines"] = engines
     save_state(state)
 
 
@@ -356,7 +828,7 @@ def handle_load_preset(
     preset_name: str | None,
     log_text: str | None,
 ):
-    outputs = [gr.update() for _ in range(27)]
+    outputs = [gr.update() for _ in range(39 + len(all_param_keys()))]
     name_update = gr.update()
     chunk_status = "Etat: non appliqué"
     chunk_state = {"applied": False, "chunks": [], "signature": None}
@@ -374,24 +846,71 @@ def handle_load_preset(
     if ref_value not in refs:
         ref_value = None
 
-    model_mode = data.get("tts_model_mode", "fr_finetune")
-    language = coerce_tts_language(model_mode, data.get("tts_language", "fr-FR"))
+    engine_id = data.get("tts_engine") or "chatterbox"
+    language, voice_id, engine_params = load_engine_config(data, engine_id)
+    backend = get_backend(engine_id)
+    if backend is None:
+        engine_id = "chatterbox"
+        backend = get_backend(engine_id)
+    engine_params = collect_engine_params(engine_id, engine_params)
+    voice_id = engine_params.get("voice_id") or voice_id
+    chatterbox_mode = engine_params.get("chatterbox_mode", "fr_finetune")
+    voices = list_piper_voices() if engine_id == "piper" else (backend.list_voices() if backend else [])
+    if voices and engine_params.get("voice_id") is None:
+        engine_params["voice_id"] = voices[0].id
+    final_voice, voice_label_update, voice_fallback = build_voice_label_update(
+        engine_id, backend, voice_id
+    )
+    final_lang, did_fallback, lang_update, lang_locked_update = language_ui_updates(
+        engine_id, backend, chatterbox_mode, language, final_voice
+    )
+    supports_speed = bool(
+        engine_id == "piper"
+        and final_voice
+        and piper_voice_supports_length_scale(final_voice)
+    )
+    context = {
+        "chatterbox_mode": chatterbox_mode,
+        "supports_ref_audio": backend.supports_ref_audio if backend else False,
+        "uses_internal_voices": backend.uses_internal_voices if backend else False,
+        "voice_count": len(voices),
+        "piper_supports_speed": supports_speed,
+    }
+    ref_note_update = gr.update(value=backend_ref_note(backend))
+    warning_md = language_warning(engine_id, language, final_lang, did_fallback)
+    if voice_fallback:
+        warning_md = "\n".join(filter(None, [warning_md, voice_fallback]))
+    warning_update = gr.update(value=warning_md, visible=bool(warning_md))
+    piper_status_update = gr.update(
+        value=piper_voice_status_text(voices),
+        visible=engine_id == "piper",
+    )
+    piper_refresh_update = gr.update(visible=engine_id == "piper")
+    piper_install_update = gr.update(visible=engine_id == "piper")
+    piper_catalog_update = gr.update(visible=engine_id == "piper")
+    piper_speed_note = piper_speed_note_update(engine_id, final_voice, supports_speed)
+    param_updates = build_param_updates(engine_id, engine_params, context)
     updates = [
-        gr.update(value=ref_value),
+        gr.update(value=ref_value, visible=bool(backend and backend.supports_ref_audio)),
+        ref_note_update,
         gr.update(value=data.get("out_dir") or str(DEFAULT_OUTPUT_DIR)),
         gr.update(value=data.get("user_filename", "")),
         gr.update(value=bool(data.get("add_timestamp", True))),
-        gr.update(value=model_mode),
-        gr.update(
-            value=language,
-            visible=(model_mode == "multilang"),
-            interactive=(model_mode == "multilang"),
-        ),
-        gr.update(
-            value=float(data.get("multilang_cfg_weight", 0.5)),
-            visible=(model_mode == "multilang"),
-            interactive=(model_mode == "multilang"),
-        ),
+        gr.update(value=engine_id),
+        lang_update,
+        lang_locked_update,
+        gr.update(value=engine_status_markdown(engine_id)),
+        gr.update(visible=not backend_status(engine_id).get("installed")),
+        gr.update(visible=backend_status(engine_id).get("installed") and engine_id != "chatterbox"),
+        gr.update(interactive=backend_status(engine_id).get("installed")),
+        voice_label_update,
+        piper_status_update,
+        piper_refresh_update,
+        piper_install_update,
+        piper_catalog_update,
+        piper_speed_note,
+        warning_update,
+        *param_updates,
         gr.update(value=int(data.get("comma_pause_ms", DEFAULT_COMMA_PAUSE_MS))),
         gr.update(value=int(data.get("period_pause_ms", DEFAULT_PERIOD_PAUSE_MS))),
         gr.update(value=int(data.get("semicolon_pause_ms", DEFAULT_SEMICOLON_PAUSE_MS))),
@@ -405,10 +924,6 @@ def handle_load_preset(
         gr.update(value=float(data.get("max_est_seconds_per_chunk", DEFAULT_MAX_EST_SECONDS_PER_CHUNK))),
         gr.update(value=bool(data.get("disable_newline_chunking", False))),
         gr.update(value=bool(data.get("verbose_logs", False))),
-        gr.update(value=_coerce_float(data.get("exaggeration"), 0.5)),
-        gr.update(value=_coerce_float(data.get("cfg_weight"), 0.6)),
-        gr.update(value=_coerce_float(data.get("temperature"), 0.5)),
-        gr.update(value=_coerce_float(data.get("repetition_penalty"), 1.35)),
         gr.update(value=int(data.get("fade_ms", FADE_MS))),
         gr.update(value=int(data.get("zero_cross_radius_ms", ZERO_CROSS_RADIUS_MS))),
         gr.update(value=_coerce_float(data.get("silence_threshold"), SILENCE_THRESHOLD)),
@@ -416,7 +931,13 @@ def handle_load_preset(
         gr.update(value=preset_name),
     ]
     name_update = gr.update(value=preset_name)
-    persist_state({"last_preset": preset_name})
+    persist_state(
+        {
+            "last_preset": preset_name,
+            "last_tts_engine": engine_id,
+        }
+    )
+    persist_engine_state(engine_id, language=final_lang, voice_id=final_voice, params=engine_params)
     log_text = append_log(f"Preset chargé: {preset_name}", log_text)
     return (*updates, name_update, chunk_status, chunk_state, log_text)
 
@@ -427,9 +948,8 @@ def handle_save_preset(
     out_dir: str | None,
     user_filename: str | None,
     add_timestamp: bool,
-    tts_model_mode: str,
     tts_language: str | None,
-    multilang_cfg_weight: float,
+    tts_engine: str,
     comma_pause_ms: int,
     period_pause_ms: int,
     semicolon_pause_ms: int,
@@ -441,28 +961,33 @@ def handle_save_preset(
     max_est_seconds_per_chunk: float,
     disable_newline_chunking: bool,
     verbose_logs: bool,
-    exaggeration: float,
-    cfg_weight: float,
-    temperature: float,
-    repetition_penalty: float,
     fade_ms: int,
     zero_cross_radius_ms: int,
     silence_threshold: float,
     silence_min_ms: int,
     log_text: str | None,
+    *param_values,
 ):
     if not preset_name:
         log_text = append_log("Nom de preset requis.", log_text)
         return gr.update(), gr.update(), log_text
 
+    param_values_map = dict(zip(all_param_keys(), param_values))
+    engine_params = collect_engine_params(tts_engine, param_values_map)
+    voice_id = engine_params.get("voice_id")
     data = {
         "ref_name": ref_name,
         "out_dir": out_dir,
         "user_filename": user_filename or "",
         "add_timestamp": bool(add_timestamp),
-        "tts_model_mode": str(tts_model_mode),
-        "tts_language": str(coerce_tts_language(tts_model_mode, tts_language)),
-        "multilang_cfg_weight": float(multilang_cfg_weight),
+        "tts_engine": str(tts_engine),
+        "engines": {
+            str(tts_engine): {
+                "language": str(tts_language or "fr-FR"),
+                "voice_id": voice_id,
+                "params": engine_params,
+            }
+        },
         "comma_pause_ms": int(comma_pause_ms),
         "period_pause_ms": int(period_pause_ms),
         "semicolon_pause_ms": int(semicolon_pause_ms),
@@ -474,10 +999,6 @@ def handle_save_preset(
         "max_est_seconds_per_chunk": float(max_est_seconds_per_chunk),
         "disable_newline_chunking": bool(disable_newline_chunking),
         "verbose_logs": bool(verbose_logs),
-        "exaggeration": float(exaggeration),
-        "cfg_weight": float(cfg_weight),
-        "temperature": float(temperature),
-        "repetition_penalty": float(repetition_penalty),
         "fade_ms": int(fade_ms),
         "zero_cross_radius_ms": int(zero_cross_radius_ms),
         "silence_threshold": float(silence_threshold),
@@ -553,23 +1074,207 @@ def handle_toggle_verbose_logs(verbose: bool, log_text: str | None):
     return log_text
 
 
-def coerce_tts_language(mode: str, language: str | None) -> str:
-    if mode == "fr_finetune":
-        return "fr-FR"
-    return language or "fr-FR"
-
-
-def handle_model_change(
-    mode: str, language: str | None, multilang_cfg_weight: float, chunk_state: dict | None
+def handle_engine_change(
+    engine_id: str,
+    language: str | None,
+    chatterbox_mode: str,
+    chunk_state: dict | None,
 ):
-    coerced = coerce_tts_language(mode, language)
-    show_language = mode == "multilang"
-    lang_update = gr.update(value=coerced, visible=show_language, interactive=show_language)
-    cfg_update = gr.update(
-        value=float(multilang_cfg_weight), visible=show_language, interactive=show_language
+    backend = get_backend(engine_id)
+    if backend is None:
+        engine_id = "chatterbox"
+        backend = get_backend(engine_id)
+    state_data = load_state()
+    state_language, state_voice, state_params = load_engine_config(state_data, engine_id)
+    engine_params = collect_engine_params(engine_id, state_params)
+    if chatterbox_mode:
+        engine_params["chatterbox_mode"] = chatterbox_mode
+    chatterbox_mode = engine_params.get("chatterbox_mode", "fr_finetune")
+    voices = list_piper_voices() if engine_id == "piper" else (backend.list_voices() if backend else [])
+    if voices and engine_params.get("voice_id") is None:
+        engine_params["voice_id"] = voices[0].id
+    state_voice = engine_params.get("voice_id") or state_voice
+    coerced_language = language or state_language or "fr-FR"
+    final_voice, voice_label_update, voice_fallback = build_voice_label_update(
+        engine_id, backend, state_voice
     )
+    final_lang, did_fallback, lang_update, lang_locked_update = language_ui_updates(
+        engine_id, backend, chatterbox_mode, coerced_language, final_voice
+    )
+    ref_note_update = gr.update(value=backend_ref_note(backend))
+    supports_speed = bool(
+        engine_id == "piper"
+        and final_voice
+        and piper_voice_supports_length_scale(final_voice)
+    )
+    context = {
+        "chatterbox_mode": chatterbox_mode,
+        "supports_ref_audio": backend.supports_ref_audio if backend else False,
+        "uses_internal_voices": backend.uses_internal_voices if backend else False,
+        "voice_count": len(voices),
+        "piper_supports_speed": supports_speed,
+    }
+    param_updates = build_param_updates(engine_id, engine_params, context)
+    warning_md = language_warning(engine_id, coerced_language, final_lang, did_fallback)
+    if voice_fallback:
+        warning_md = "\n".join(filter(None, [warning_md, voice_fallback]))
+    if engine_id == "piper" and not voices:
+        warning_md = "\n".join(
+            filter(None, [warning_md, "Aucune voix Piper installée. Installez une voix FR recommandée."])
+        )
+    warning_update = gr.update(value=warning_md, visible=bool(warning_md))
+    piper_status_update = gr.update(
+        value=piper_voice_status_text(voices),
+        visible=engine_id == "piper",
+    )
+    piper_refresh_update = gr.update(visible=engine_id == "piper")
+    piper_install_update = gr.update(visible=engine_id == "piper")
+    piper_catalog_update = gr.update(visible=engine_id == "piper")
+    piper_speed_note = piper_speed_note_update(engine_id, final_voice, supports_speed)
+    persist_state({"last_tts_engine": engine_id})
+    persist_engine_state(engine_id, language=final_lang, voice_id=final_voice, params=engine_params)
     state, status = mark_chunk_dirty(chunk_state)
-    return lang_update, cfg_update, state, status
+    return (
+        lang_update,
+        lang_locked_update,
+        state,
+        status,
+        gr.update(visible=bool(backend and backend.supports_ref_audio)),
+        ref_note_update,
+        *engine_status_updates(engine_id),
+        voice_label_update,
+        piper_status_update,
+        piper_refresh_update,
+        piper_install_update,
+        piper_catalog_update,
+        piper_speed_note,
+        warning_update,
+        *param_updates,
+    )
+
+
+def handle_voice_change(
+    engine_id: str,
+    voice_id: str | None,
+    language: str | None,
+    chatterbox_mode: str,
+    chunk_state: dict | None,
+    *param_values,
+):
+    backend = get_backend(engine_id)
+    if backend is None:
+        engine_id = "chatterbox"
+        backend = get_backend(engine_id)
+    param_values_map = dict(zip(all_param_keys(), param_values))
+    engine_params = collect_engine_params(engine_id, param_values_map)
+    if voice_id:
+        engine_params["voice_id"] = voice_id
+    chatterbox_mode = engine_params.get("chatterbox_mode", chatterbox_mode or "fr_finetune")
+    final_voice, voice_label_update, voice_fallback = build_voice_label_update(
+        engine_id, backend, voice_id
+    )
+    coerced_language = language or "fr-FR"
+    final_lang, did_fallback, lang_update, lang_locked_update = language_ui_updates(
+        engine_id, backend, chatterbox_mode, coerced_language, final_voice
+    )
+    supports_speed = bool(
+        engine_id == "piper"
+        and final_voice
+        and piper_voice_supports_length_scale(final_voice)
+    )
+    context = {
+        "chatterbox_mode": chatterbox_mode,
+        "supports_ref_audio": backend.supports_ref_audio if backend else False,
+        "uses_internal_voices": backend.uses_internal_voices if backend else False,
+        "voice_count": len(backend.list_voices()) if backend else 0,
+        "piper_supports_speed": supports_speed,
+    }
+    param_updates = build_param_updates(engine_id, engine_params, context)
+    warning_md = language_warning(engine_id, coerced_language, final_lang, did_fallback)
+    if voice_fallback:
+        warning_md = "\n".join(filter(None, [warning_md, voice_fallback]))
+    warning_update = gr.update(value=warning_md, visible=bool(warning_md))
+    speed_note_update = piper_speed_note_update(engine_id, final_voice, supports_speed)
+    return (
+        lang_update,
+        lang_locked_update,
+        voice_label_update,
+        speed_note_update,
+        warning_update,
+        *param_updates,
+    )
+
+
+def handle_language_change(
+    engine_id: str,
+    language: str | None,
+    chatterbox_mode: str,
+    chunk_state: dict | None,
+):
+    backend = get_backend(engine_id)
+    if backend is None:
+        engine_id = "chatterbox"
+        backend = get_backend(engine_id)
+    engine_params = collect_engine_params(engine_id, {"chatterbox_mode": chatterbox_mode})
+    chatterbox_mode = engine_params.get("chatterbox_mode", "fr_finetune")
+    final_lang, did_fallback, lang_update, lang_locked_update = language_ui_updates(
+        engine_id, backend, chatterbox_mode, language or "fr-FR", None
+    )
+    param_updates = [gr.update() for _ in all_param_keys()]
+    warning_md = language_warning(engine_id, language or "fr-FR", final_lang, did_fallback)
+    warning_update = gr.update(value=warning_md, visible=bool(warning_md))
+    persist_engine_state(engine_id, language=final_lang)
+    state, status = mark_chunk_dirty(chunk_state)
+    return lang_update, lang_locked_update, warning_update, state, status, *param_updates
+
+
+def handle_chatterbox_mode_change(
+    chatterbox_mode: str,
+    language: str | None,
+    chunk_state: dict | None,
+):
+    coerced_mode = chatterbox_mode or "fr_finetune"
+    backend = get_backend("chatterbox")
+    engine_params = collect_engine_params("chatterbox", {"chatterbox_mode": coerced_mode})
+    final_lang, did_fallback, lang_update, lang_locked_update = language_ui_updates(
+        "chatterbox", backend, coerced_mode, language or "fr-FR", None
+    )
+    context = {
+        "chatterbox_mode": coerced_mode,
+        "supports_ref_audio": backend.supports_ref_audio if backend else False,
+        "uses_internal_voices": backend.uses_internal_voices if backend else False,
+        "voice_count": len(backend.list_voices()) if backend else 0,
+    }
+    param_updates = build_param_visibility_updates("chatterbox", context)
+    warning_md = language_warning("chatterbox", language or "fr-FR", final_lang, did_fallback)
+    warning_update = gr.update(value=warning_md, visible=bool(warning_md))
+    _, _, state_params = load_engine_config(load_state(), "chatterbox")
+    merged_params = dict(state_params)
+    merged_params.update(engine_params)
+    persist_engine_state("chatterbox", language=final_lang, params=merged_params)
+    state, status = mark_chunk_dirty(chunk_state)
+    return lang_update, lang_locked_update, warning_update, state, status, *param_updates
+
+
+def handle_install_backend(engine_id: str):
+    ok, logs = run_install(engine_id)
+    status_md, install_btn, uninstall_btn, generate_btn = engine_status_updates(engine_id)
+    log_text = "\n".join(logs)
+    if not ok:
+        status_md = gr.update(value=f"{engine_status_markdown(engine_id)}\n\n⚠️ Installation incomplète.")
+    return status_md, install_btn, uninstall_btn, generate_btn, gr.update(value=log_text)
+
+
+def handle_uninstall_backend(engine_id: str):
+    from backend_install.paths import venv_dir
+    import shutil
+
+    target = venv_dir(engine_id)
+    if target.exists():
+        shutil.rmtree(target)
+    status_md, install_btn, uninstall_btn, generate_btn = engine_status_updates(engine_id)
+    log_text = f"Désinstallé: {engine_id}"
+    return status_md, install_btn, uninstall_btn, generate_btn, gr.update(value=log_text)
 
 
 def _chunk_signature(
@@ -686,9 +1391,8 @@ def handle_generate(
     out_dir: str | None,
     user_filename: str | None,
     add_timestamp: bool,
-    tts_model_mode: str,
+    tts_engine: str,
     tts_language: str | None,
-    multilang_cfg_weight: float,
     comma_pause_ms: int,
     period_pause_ms: int,
     semicolon_pause_ms: int,
@@ -700,16 +1404,13 @@ def handle_generate(
     max_est_seconds_per_chunk: float,
     disable_newline_chunking: bool,
     verbose_logs: bool,
-    exaggeration: float,
-    cfg_weight: float,
-    temperature: float,
-    repetition_penalty: float,
     fade_ms: int,
     zero_cross_radius_ms: int,
     silence_threshold: float,
     silence_min_ms: int,
     chunk_state: dict | None,
     log_text: str | None,
+    *param_values,
 ):
     if not text or not text.strip():
         state = chunk_state or {"applied": False, "chunks": [], "signature": None}
@@ -723,18 +1424,16 @@ def handle_generate(
     else:
         adjusted_text = adjusted_text or text or ""
 
-    audio_prompt = None
-    if ref_name:
-        try:
-            audio_prompt = resolve_ref_path(ref_name)
-        except FileNotFoundError:
-            log_text = append_ui_log(f"Référence introuvable: {ref_name}", log_text)
-            return adjusted_text, None, "", "", "Etat: non appliqué", chunk_state, log_text
-
     text_used = adjusted_text
     if auto_adjust:
         assert text_used == adjusted_text
 
+    param_values_map = dict(zip(all_param_keys(), param_values))
+    engine_params = collect_engine_params(tts_engine, param_values_map)
+    voice_id = engine_params.get("voice_id")
+    tts_language = tts_language or "fr-FR"
+    requested_language = tts_language
+    chatterbox_mode = engine_params.get("chatterbox_mode", "fr_finetune")
     normalized_text = normalize_text(text_used)
     if normalized_text != text_used and verbose_logs:
         before = len(re.findall(r"\bII\b", text_used))
@@ -769,36 +1468,99 @@ def handle_generate(
     if estimate >= 35:
         log_text = append_ui_log("⚠️ Texte long détecté.", log_text)
 
-    tts_language = coerce_tts_language(tts_model_mode, tts_language)
-    backend_language = tts_language
-    effective_cfg = cfg_weight
-    if tts_model_mode == "multilang":
-        backend_language = LANGUAGE_MAP.get(tts_language, "fr")
-        effective_cfg = float(multilang_cfg_weight)
+    backend = get_backend(tts_engine)
+    if backend is None:
+        log_text = append_ui_log(f"Backend introuvable: {tts_engine}", log_text)
+        state = chunk_state or {"applied": False, "chunks": [], "signature": None}
+        return adjusted_text, None, "", "", "Etat: non appliqué", state, log_text
+    if not backend.is_available():
+        reason = backend.unavailable_reason() or "Dépendances manquantes."
+        log_text = append_ui_log(f"Backend indisponible: {tts_engine}. {reason}", log_text)
+        state = chunk_state or {"applied": False, "chunks": [], "signature": None}
+        return adjusted_text, None, "", "", "Etat: non appliqué", state, log_text
+
+    supported = supported_languages_for(tts_engine, backend, chatterbox_mode)
+    tts_language, did_fallback = coerce_language(
+        tts_language,
+        supported,
+        backend.default_language if backend else None,
+    )
+    if did_fallback:
         log_text = append_ui_log(
-            f"requested_language_bcp47={tts_language}",
+            f"tts_language_fallback requested={requested_language} -> {tts_language} (engine={tts_engine})",
             log_text,
-            verbose=False,
-            enabled=True,
         )
-        log_text = append_ui_log(
-            f"backend_language_id={backend_language}",
-            log_text,
-            verbose=False,
-            enabled=True,
-        )
+    backend_language = backend.map_language(tts_language)
+    log_text = append_ui_log(f"tts_backend={backend.id}", log_text, verbose=False, enabled=True)
     log_text = append_ui_log(
-        f"voice_mode={tts_model_mode}",
+        f"backend_lang={backend_language}",
         log_text,
         verbose=False,
         enabled=True,
     )
     log_text = append_ui_log(
-        f"cfg_weight={effective_cfg}",
+        f"supports_ref={backend.supports_ref_audio}",
         log_text,
         verbose=False,
         enabled=True,
     )
+
+    audio_prompt = None
+    if ref_name and backend.supports_ref_audio:
+        try:
+            audio_prompt = resolve_ref_path(ref_name)
+        except FileNotFoundError:
+            log_text = append_ui_log(f"Référence introuvable: {ref_name}", log_text)
+            return adjusted_text, None, "", "", "Etat: non appliqué", chunk_state, log_text
+    elif ref_name and not backend.supports_ref_audio:
+        log_text = append_ui_log("Référence ignorée (backend sans voice ref).", log_text)
+
+    warnings = backend.validate_config(
+        {
+            "language": tts_language,
+            "voice_ref": audio_prompt,
+        }
+    )
+    for warning in warnings:
+        log_text = append_ui_log(f"backend_warning={warning}", log_text)
+
+    voices = backend.list_voices()
+    voice_ids = [voice.id for voice in voices]
+    if voice_id and voice_ids and voice_id not in voice_ids:
+        log_text = append_ui_log(
+            f"tts_voice_fallback requested={voice_id} -> {voice_ids[0]} (engine={tts_engine})",
+            log_text,
+        )
+        voice_id = voice_ids[0]
+    if backend.uses_internal_voices and not voice_id:
+        if voices:
+            voice_id = voices[0].id
+        else:
+            log_text = append_ui_log(
+                "Aucune voix Piper installée. Installez une voix FR recommandée.",
+                log_text,
+            )
+            state = chunk_state or {"applied": False, "chunks": [], "signature": None}
+            return adjusted_text, None, "", "", "Etat: non appliqué", state, log_text
+    if backend.uses_internal_voices and voice_id:
+        for voice in voices:
+            if voice.id == voice_id and voice.lang_codes:
+                tts_language = voice.lang_codes[0]
+                break
+    supports_speed = bool(
+        backend.id == "piper"
+        and voice_id
+        and piper_voice_supports_length_scale(voice_id)
+    )
+
+    tts_model_mode = chatterbox_mode if tts_engine == "chatterbox" else "fr_finetune"
+    if tts_engine == "chatterbox" and tts_model_mode == "fr_finetune":
+        tts_language = "fr-FR"
+    multilang_cfg_weight = engine_params.get("multilang_cfg_weight", 0.5)
+    cfg_weight = engine_params.get("cfg_weight", 0.6)
+    effective_cfg = cfg_weight if tts_model_mode == "fr_finetune" else float(multilang_cfg_weight)
+    log_text = append_ui_log(f"voice_mode={tts_model_mode}", log_text, verbose=False, enabled=True)
+    log_text = append_ui_log(f"cfg_weight={effective_cfg}", log_text, verbose=False, enabled=True)
 
     chunk_preview_text = ""
     signature = _chunk_signature(
@@ -849,31 +1611,67 @@ def handle_generate(
 
     tmp_path = TMP_DIR / f"{uuid.uuid4().hex}.tmp.wav"
     payload = {
+        "tts_backend": backend.id,
         "script": normalized_text,
-        "chunks": chunks,
-        "audio_prompt_path": audio_prompt,
+        "chunks": _serialize_chunks(chunks),
+        "pause_plan": build_pause_plan(
+            chunks,
+            {
+                "comma_pause_ms": int(comma_pause_ms),
+                "period_pause_ms": int(period_pause_ms),
+                "semicolon_pause_ms": int(semicolon_pause_ms),
+                "colon_pause_ms": int(colon_pause_ms),
+                "dash_pause_ms": int(dash_pause_ms),
+                "newline_pause_ms": int(newline_pause_ms),
+            },
+        ),
+        "voice_ref_path": audio_prompt,
         "out_path": str(tmp_path),
-        "exaggeration": exaggeration,
-        "cfg_weight": cfg_weight,
-        "temperature": temperature,
-        "repetition_penalty": repetition_penalty,
-        "tts_model_mode": str(tts_model_mode),
-        "tts_language": str(tts_language),
-        "multilang_cfg_weight": float(multilang_cfg_weight),
-        "comma_pause_ms": int(comma_pause_ms),
-        "period_pause_ms": int(period_pause_ms),
-        "semicolon_pause_ms": int(semicolon_pause_ms),
-        "colon_pause_ms": int(colon_pause_ms),
-        "dash_pause_ms": int(dash_pause_ms),
-        "newline_pause_ms": int(newline_pause_ms),
-        "min_words_per_chunk": int(min_words_per_chunk),
-        "max_words_without_terminator": int(max_words_without_terminator),
-        "max_est_seconds_per_chunk": float(max_est_seconds_per_chunk),
-        "fade_ms": int(fade_ms),
-        "zero_cross_radius_ms": int(zero_cross_radius_ms),
-        "silence_threshold": float(silence_threshold),
-        "silence_min_ms": int(silence_min_ms),
+        "lang": str(backend_language or tts_language or "fr-FR"),
+        "engine_params": {},
+        "chunk_settings": {
+            "min_words_per_chunk": int(min_words_per_chunk),
+            "max_words_without_terminator": int(max_words_without_terminator),
+            "max_est_seconds_per_chunk": float(max_est_seconds_per_chunk),
+        },
+        "pause_settings": {
+            "comma_pause_ms": int(comma_pause_ms),
+            "period_pause_ms": int(period_pause_ms),
+            "semicolon_pause_ms": int(semicolon_pause_ms),
+            "colon_pause_ms": int(colon_pause_ms),
+            "dash_pause_ms": int(dash_pause_ms),
+            "newline_pause_ms": int(newline_pause_ms),
+        },
+        "post_settings": {
+            "zero_cross_radius_ms": int(zero_cross_radius_ms),
+            "fade_ms": int(fade_ms),
+            "silence_threshold": float(silence_threshold),
+            "silence_min_ms": int(silence_min_ms),
+        },
+        "target_sr": 24000,
     }
+    engine_params_payload = dict(engine_params)
+    if tts_engine == "chatterbox":
+        engine_params_payload.update(
+            {
+                "tts_model_mode": str(tts_model_mode),
+                "exaggeration": engine_params.get("exaggeration", 0.5),
+                "cfg_weight": cfg_weight,
+                "temperature": engine_params.get("temperature", 0.5),
+                "repetition_penalty": engine_params.get("repetition_penalty", 1.35),
+            }
+        )
+    if backend.id == "piper" and not supports_speed:
+        engine_params_payload.pop("speed", None)
+        if voice_id:
+            log_text = append_ui_log(
+                "Vitesse non supportée par cette voix (paramètre ignoré).",
+                log_text,
+            )
+    if backend.uses_internal_voices and voice_id:
+        engine_params_payload["voice"] = voice_id
+    payload["engine_params"] = engine_params_payload
+    log_text = append_ui_log(f"params_effectifs={engine_params_payload}", log_text, verbose=True, enabled=verbose_logs)
     ctx = mp.get_context("spawn")
     result_queue: mp.Queue = ctx.Queue()
     proc = ctx.Process(target=_generate_longform_worker, args=(payload, result_queue))
@@ -903,13 +1701,21 @@ def handle_generate(
     if not result or result.get("status") != "ok":
         _cleanup_tmp(str(tmp_path))
         _reset_job_state()
-        if result and result.get("status") == "error":
+        if result and result.get("status") == "unavailable":
+            log_text = append_ui_log(f"Backend indisponible: {result.get('error')}", log_text)
+        elif result and result.get("status") == "error":
             log_text = append_ui_log(f"Erreur TTS: {result.get('error')}", log_text)
         else:
             log_text = append_ui_log("Annulé.", log_text)
         return adjusted_text, None, "", chunk_preview_text, chunk_status, chunk_state, log_text
 
     meta = result.get("meta", {})
+    if meta.get("piper_voice"):
+        log_text = append_ui_log(f"piper_voice={meta.get('piper_voice')}", log_text)
+    if meta.get("piper_model_path"):
+        log_text = append_ui_log(f"piper_model_path={meta.get('piper_model_path')}", log_text)
+    if verbose_logs and meta.get("backend_cmd"):
+        log_text = append_ui_log(f"backend_cmd={meta.get('backend_cmd')}", log_text, verbose=True, enabled=True)
     preview_path_obj = Path(preview_path)
     try:
         preview_path_obj.parent.mkdir(parents=True, exist_ok=True)
@@ -964,6 +1770,42 @@ def handle_generate(
     total_duration = meta.get("total_duration")
     if total_duration is not None:
         log_text = append_ui_log(f"Durée finale: {total_duration:.2f}s", log_text)
+    if meta.get("total_pause_ms") is not None:
+        log_text = append_ui_log(
+            f"pause_total_ms={meta.get('total_pause_ms')}",
+            log_text,
+            verbose=True,
+            enabled=verbose_logs,
+        )
+    if meta.get("segments_count_total") is not None:
+        log_text = append_ui_log(
+            f"segments_count_total={meta.get('segments_count_total')}",
+            log_text,
+            verbose=True,
+            enabled=verbose_logs,
+        )
+    if meta.get("join_count") is not None:
+        log_text = append_ui_log(
+            f"join_count={meta.get('join_count')}",
+            log_text,
+            verbose=True,
+            enabled=verbose_logs,
+        )
+    if verbose_logs and meta.get("punct_tokens"):
+        token_items = " ".join(f"{tok}:{ms}" for tok, ms in meta.get("punct_tokens", []))
+        log_text = append_ui_log(
+            f"punct_tokens={token_items}",
+            log_text,
+            verbose=True,
+            enabled=True,
+        )
+    if meta.get("sr"):
+        log_text = append_ui_log(
+            f"sr_final={meta.get('sr')}",
+            log_text,
+            verbose=True,
+            enabled=verbose_logs,
+        )
 
     user_path_obj = Path(user_path)
     preview_path_obj = Path(preview_path)
@@ -979,14 +1821,6 @@ def handle_generate(
         {
             "last_ref": ref_name,
             "last_out_dir": output_dir,
-            "last_exaggeration": float(exaggeration),
-            "last_cfg_weight": float(cfg_weight),
-            "last_temperature": float(temperature),
-            "last_repetition_penalty": float(repetition_penalty),
-            "last_fade_ms": int(fade_ms),
-            "last_zero_cross_radius_ms": int(zero_cross_radius_ms),
-            "last_silence_threshold": float(silence_threshold),
-            "last_silence_min_ms": int(silence_min_ms),
             "last_user_filename": user_filename or "",
             "last_add_timestamp": bool(add_timestamp),
             "last_comma_pause_ms": int(comma_pause_ms),
@@ -1000,11 +1834,10 @@ def handle_generate(
             "last_max_est_seconds_per_chunk": float(max_est_seconds_per_chunk),
             "last_disable_newline_chunking": bool(disable_newline_chunking),
             "last_verbose_logs": bool(verbose_logs),
-            "last_tts_model_mode": str(tts_model_mode),
-            "last_tts_language": str(tts_language),
-            "last_multilang_cfg_weight": float(multilang_cfg_weight),
+            "last_tts_engine": str(tts_engine),
         }
     )
+    persist_engine_state(tts_engine, language=tts_language, voice_id=voice_id, params=engine_params)
     log_text = append_ui_log(f"Fichier pré-écoute: {preview_path_obj}", log_text)
     return (
         adjusted_text,
@@ -1089,9 +1922,8 @@ def handle_save_preset_confirm(
     out_dir: str | None,
     user_filename: str | None,
     add_timestamp: bool,
-    tts_model_mode: str,
     tts_language: str | None,
-    multilang_cfg_weight: float,
+    tts_engine: str,
     comma_pause_ms: int,
     period_pause_ms: int,
     semicolon_pause_ms: int,
@@ -1103,16 +1935,13 @@ def handle_save_preset_confirm(
     max_est_seconds_per_chunk: float,
     disable_newline_chunking: bool,
     verbose_logs: bool,
-    exaggeration: float,
-    cfg_weight: float,
-    temperature: float,
-    repetition_penalty: float,
     fade_ms: int,
     zero_cross_radius_ms: int,
     silence_threshold: float,
     silence_min_ms: int,
     confirm_state: dict | None,
     log_text: str | None,
+    *param_values,
 ):
     (
         confirmed,
@@ -1140,9 +1969,8 @@ def handle_save_preset_confirm(
         out_dir,
         user_filename,
         add_timestamp,
-        tts_model_mode,
         tts_language,
-        multilang_cfg_weight,
+        tts_engine,
         comma_pause_ms,
         period_pause_ms,
         semicolon_pause_ms,
@@ -1154,15 +1982,12 @@ def handle_save_preset_confirm(
         max_est_seconds_per_chunk,
         disable_newline_chunking,
         verbose_logs,
-        exaggeration,
-        cfg_weight,
-        temperature,
-        repetition_penalty,
         fade_ms,
         zero_cross_radius_ms,
         silence_threshold,
         silence_min_ms,
         log_text,
+        *param_values,
     )
     return (
         dropdown_update,
@@ -1300,22 +2125,48 @@ def build_ui() -> gr.Blocks:
         False,
     )
     default_verbose_logs = _coerce_bool(state_data.get("last_verbose_logs"), False)
-    default_tts_model_mode = state_data.get("last_tts_model_mode") or _state_or_preset(
-        "tts_model_mode", "fr_finetune"
+    default_tts_engine = state_data.get("last_tts_engine") or _state_or_preset(
+        "tts_engine", "chatterbox"
     )
-    default_tts_language = state_data.get("last_tts_language") or _state_or_preset(
-        "tts_language", "fr-FR"
+    default_backend_check = get_backend(default_tts_engine)
+    if not default_backend_check or not default_backend_check.is_available():
+        default_tts_engine = "chatterbox"
+    default_backend = get_backend(default_tts_engine)
+    state_language, state_voice, state_params = load_engine_config(state_data, default_tts_engine)
+    preset_language, preset_voice, preset_params = load_engine_config(base_preset, default_tts_engine)
+    merged_params = {}
+    merged_params.update(preset_params)
+    merged_params.update(state_params)
+    engine_params = collect_engine_params(default_tts_engine, merged_params)
+    default_chatterbox_mode = engine_params.get("chatterbox_mode", "fr_finetune")
+    default_tts_language = state_language or preset_language or "fr-FR"
+    if not default_tts_language:
+        default_tts_language = "fr-FR"
+    default_supported_languages = supported_languages_for(
+        default_tts_engine, default_backend, default_chatterbox_mode
     )
-    default_tts_language = coerce_tts_language(default_tts_model_mode, default_tts_language)
-    default_multilang_cfg_weight = _coerce_float(
-        state_data.get("last_multilang_cfg_weight")
-        or _state_or_preset("multilang_cfg_weight", 0.5),
-        0.5,
+    default_tts_language, _ = coerce_language(
+        default_tts_language,
+        default_supported_languages,
+        default_backend.default_language() if default_backend else None,
     )
-    default_exaggeration = _coerce_float(_state_or_preset("exaggeration", 0.5), 0.5)
-    default_cfg = _coerce_float(_state_or_preset("cfg_weight", 0.6), 0.6)
-    default_temperature = _coerce_float(_state_or_preset("temperature", 0.5), 0.5)
-    default_repetition = _coerce_float(_state_or_preset("repetition_penalty", 1.35), 1.35)
+    show_lang_default = len(default_supported_languages) > 1 and bool(
+        default_backend and default_backend.supports_multilang
+    )
+    default_lang_locked_text = ""
+    if not show_lang_default:
+        default_lang_locked_text = f"Langue : {default_tts_language} (verrouillée)"
+    voices = default_backend.list_voices() if default_backend else []
+    voice_ids = [voice.id for voice in voices]
+    default_voice_value = state_voice or preset_voice
+    if default_voice_value not in voice_ids:
+        default_voice_value = voice_ids[0] if voice_ids else None
+    default_voice_label_text = ""
+    default_voice_label_visible = False
+    if default_backend:
+        if len(voice_ids) == 0 and default_tts_engine == "piper":
+            default_voice_label_text = "Voix : (aucune)"
+            default_voice_label_visible = True
     default_fade_ms = int(_state_or_preset("fade_ms", FADE_MS))
     default_zero_cross_radius_ms = int(
         _state_or_preset("zero_cross_radius_ms", ZERO_CROSS_RADIUS_MS)
@@ -1408,8 +2259,13 @@ def build_ui() -> gr.Blocks:
                     value=default_ref,
                     interactive=True,
                     show_label=False,
+                    visible=bool(default_backend and default_backend.supports_ref_audio),
                 )
                 refresh_btn = gr.Button("Refresh", size="sm")
+            ref_support_note = gr.Markdown(
+                backend_ref_note(default_backend),
+                elem_classes=["inline-info"],
+            )
             with gr.Accordion("Importer des fichiers audio", open=False):
                 upload = gr.Files(
                     label="Drag & drop",
@@ -1457,31 +2313,129 @@ def build_ui() -> gr.Blocks:
             adjust_info = gr.Markdown("Durée estimée: --", elem_classes=["inline-info"])
             gr.Markdown("### Modèle / Langue", elem_classes=["subhead"])
             with gr.Row():
-                model_mode_dropdown = gr.Dropdown(
-                    label="Modèle",
-                    choices=[
-                        ("FR fine-tuné (spécialisé)", "fr_finetune"),
-                        ("Chatterbox multilangue", "multilang"),
-                    ],
-                    value=default_tts_model_mode,
+                engine_dropdown = gr.Dropdown(
+                    label="Moteur",
+                    choices=backend_choices(),
+                    value=default_tts_engine,
                 )
+                param_specs = _param_spec_catalog()
+                param_widgets = {}
+                default_context = {
+                    "chatterbox_mode": default_chatterbox_mode,
+                    "supports_ref_audio": default_backend.supports_ref_audio if default_backend else False,
+                    "uses_internal_voices": default_backend.uses_internal_voices if default_backend else False,
+                    "voice_count": len(voices),
+                    "piper_supports_speed": bool(
+                        default_tts_engine == "piper"
+                        and default_voice_value
+                        and piper_voice_supports_length_scale(default_voice_value)
+                    ),
+                }
+                chatterbox_mode_spec = param_specs.get("chatterbox_mode")
+                chatterbox_mode_dropdown = create_param_widget(
+                    chatterbox_mode_spec,
+                    coerce_param_value(
+                        chatterbox_mode_spec,
+                        engine_params.get("chatterbox_mode", chatterbox_mode_spec.default),
+                    ),
+                    default_tts_engine == "chatterbox",
+                )
+                speed_spec = param_specs.get("speed")
+                speed_value = None
+                speed_visible = False
+                if speed_spec:
+                    speed_value = coerce_param_value(
+                        speed_spec, engine_params.get("speed", speed_spec.default)
+                    )
+                    speed_visible = "speed" in engine_param_schema(default_tts_engine) and spec_visible(
+                        speed_spec, default_context
+                    )
                 language_dropdown = gr.Dropdown(
                     label="Langue",
-                    choices=LANGUAGE_CHOICES,
+                    choices=language_choices(default_supported_languages),
                     value=default_tts_language,
-                    visible=default_tts_model_mode == "multilang",
-                    interactive=default_tts_model_mode == "multilang",
+                    visible=show_lang_default,
+                    interactive=show_lang_default,
                 )
-                multilang_cfg_slider = gr.Slider(
-                    0.0,
-                    1.0,
-                    value=default_multilang_cfg_weight,
-                    step=0.05,
-                    label="CFG multilangue",
-                    info="Réduire pour limiter l'accent bleed en cross-language.",
-                    visible=default_tts_model_mode == "multilang",
-                    interactive=default_tts_model_mode == "multilang",
+            lang_locked_md = gr.Markdown(
+                default_lang_locked_text,
+                elem_classes=["inline-info"],
+                visible=not show_lang_default,
+            )
+            voice_label_md = gr.Markdown(
+                default_voice_label_text,
+                elem_classes=["inline-info"],
+                visible=default_voice_label_visible,
+            )
+            piper_voice_status_md = gr.Markdown(
+                piper_voice_status_text(voices) if default_tts_engine == "piper" else "",
+                elem_classes=["inline-info"],
+                visible=default_tts_engine == "piper",
+            )
+            with gr.Row():
+                piper_refresh_button = gr.Button(
+                    "Refresh voix",
+                    visible=default_tts_engine == "piper",
                 )
+                piper_install_voice_button = gr.Button(
+                    "Installer une voix FR recommandée",
+                    visible=default_tts_engine == "piper",
+                )
+            piper_catalog_md = gr.Markdown(
+                "Catalogue voix Piper : https://huggingface.co/rhasspy/piper-voices/tree/main",
+                elem_classes=["inline-info"],
+                visible=default_tts_engine == "piper",
+            )
+            default_supports_speed = bool(
+                default_tts_engine == "piper"
+                and default_voice_value
+                and piper_voice_supports_length_scale(default_voice_value)
+            )
+            piper_speed_note_md = gr.Markdown(
+                "Vitesse non supportée par cette voix",
+                elem_classes=["inline-info"],
+                visible=default_tts_engine == "piper" and bool(default_voice_value) and not default_supports_speed,
+            )
+            if speed_spec:
+                speed_widget = create_param_widget(speed_spec, speed_value, speed_visible)
+                param_widgets["speed"] = speed_widget
+            warnings_md = gr.Markdown("", elem_classes=["inline-info"], visible=False)
+            gr.Markdown("### Paramètres moteur", elem_classes=["subhead"])
+            param_keys = [key for key in all_param_keys() if key not in ("chatterbox_mode", "speed")]
+            for key in param_keys:
+                spec = param_specs.get(key)
+                if spec is None:
+                    continue
+                if key in engine_params:
+                    value = coerce_param_value(spec, engine_params.get(key, spec.default))
+                else:
+                    value = coerce_param_value(spec, spec.default)
+                visible = key in engine_param_schema(default_tts_engine) and spec_visible(
+                    spec, default_context
+                )
+                param_widgets[key] = create_param_widget(spec, value, visible)
+            param_widgets["chatterbox_mode"] = chatterbox_mode_dropdown
+            engine_status_md = gr.Markdown(
+                engine_status_markdown(default_tts_engine),
+                elem_classes=["inline-info"],
+            )
+            install_backend_btn = gr.Button(
+                "Installer",
+                variant="primary",
+                visible=not backend_status(default_tts_engine).get("installed"),
+            )
+            uninstall_backend_btn = gr.Button(
+                "Désinstaller",
+                variant="secondary",
+                visible=backend_status(default_tts_engine).get("installed")
+                and default_tts_engine != "chatterbox",
+            )
+            install_logs_box = gr.Textbox(
+                label="Logs installation",
+                lines=4,
+                max_lines=16,
+                interactive=False,
+            )
             gr.Markdown("### Pauses automatiques (ponctuation)", elem_classes=["subhead"])
             with gr.Row():
                 comma_pause_slider = gr.Slider(
@@ -1587,42 +2541,6 @@ def build_ui() -> gr.Blocks:
                     placeholder="Aperçu du pré-chunking.",
                 )
 
-        with gr.Group():
-            gr.Markdown("## Paramètres modèle", elem_classes=["section-title"])
-            with gr.Row():
-                exaggeration_slider = gr.Slider(
-                    0.0,
-                    1.5,
-                    value=default_exaggeration,
-                    step=0.05,
-                    label="Exagération",
-                    info="Expressivité globale (0.5 recommandé)",
-                )
-                cfg_slider = gr.Slider(
-                    0.0,
-                    1.0,
-                    value=default_cfg,
-                    step=0.05,
-                    label="CFG",
-                    info="Plus haut = voix plus rigoureuse",
-                )
-            with gr.Row():
-                temperature_slider = gr.Slider(
-                    0.1,
-                    1.0,
-                    value=default_temperature,
-                    step=0.05,
-                    label="Température",
-                    info="Stabilité vs créativité",
-                )
-                repetition_slider = gr.Slider(
-                    0.8,
-                    2.0,
-                    value=default_repetition,
-                    step=0.05,
-                    label="Repetition Penalty",
-                    info="Limite les répétitions",
-                )
 
         with gr.Group():
             gr.Markdown("## Traitement audio", elem_classes=["section-title"])
@@ -1680,7 +2598,11 @@ def build_ui() -> gr.Blocks:
                     value=default_add_timestamp,
                 )
             with gr.Row():
-                generate_btn = gr.Button("Générer", variant="primary")
+                generate_btn = gr.Button(
+                    "Générer",
+                    variant="primary",
+                    interactive=backend_status(default_tts_engine).get("installed", True),
+                )
                 stop_btn = gr.Button("STOP", variant="secondary")
             result_audio = gr.Audio(label="Pré-écoute", type="filepath", autoplay=False)
             output_path_box = gr.Textbox(label="Fichier généré", interactive=False)
@@ -1839,15 +2761,134 @@ def build_ui() -> gr.Blocks:
             ],
             outputs=duration_preview,
         )
-        model_mode_dropdown.change(
-            fn=handle_model_change,
-            inputs=[model_mode_dropdown, language_dropdown, multilang_cfg_slider, chunk_state],
-            outputs=[language_dropdown, multilang_cfg_slider, chunk_state, chunk_status],
+        param_widget_list = [param_widgets[key] for key in all_param_keys()]
+        engine_dropdown.change(
+            fn=handle_engine_change,
+            inputs=[
+                engine_dropdown,
+                language_dropdown,
+                chatterbox_mode_dropdown,
+                chunk_state,
+            ],
+            outputs=[
+                language_dropdown,
+                lang_locked_md,
+                chunk_state,
+                chunk_status,
+                ref_dropdown,
+                ref_support_note,
+                engine_status_md,
+                install_backend_btn,
+                uninstall_backend_btn,
+                generate_btn,
+                voice_label_md,
+                piper_voice_status_md,
+                piper_refresh_button,
+                piper_install_voice_button,
+                piper_catalog_md,
+                piper_speed_note_md,
+                warnings_md,
+                *param_widget_list,
+            ],
         )
         language_dropdown.change(
-            fn=mark_chunk_dirty,
-            inputs=[chunk_state],
-            outputs=[chunk_state, chunk_status],
+            fn=handle_language_change,
+            inputs=[
+                engine_dropdown,
+                language_dropdown,
+                chatterbox_mode_dropdown,
+                chunk_state,
+            ],
+            outputs=[
+                language_dropdown,
+                lang_locked_md,
+                warnings_md,
+                chunk_state,
+                chunk_status,
+                *param_widget_list,
+            ],
+        )
+        chatterbox_mode_dropdown.change(
+            fn=handle_chatterbox_mode_change,
+            inputs=[
+                chatterbox_mode_dropdown,
+                language_dropdown,
+                chunk_state,
+            ],
+            outputs=[
+                language_dropdown,
+                lang_locked_md,
+                warnings_md,
+                chunk_state,
+                chunk_status,
+                *param_widget_list,
+            ],
+        )
+        install_backend_btn.click(
+            fn=handle_install_backend,
+            inputs=[engine_dropdown],
+            outputs=[
+                engine_status_md,
+                install_backend_btn,
+                uninstall_backend_btn,
+                generate_btn,
+                install_logs_box,
+            ],
+        )
+        piper_refresh_button.click(
+            fn=refresh_piper_voices,
+            inputs=[],
+            outputs=[
+                *param_widget_list,
+                voice_label_md,
+                piper_voice_status_md,
+                piper_speed_note_md,
+                warnings_md,
+                install_logs_box,
+            ],
+        )
+        piper_install_voice_button.click(
+            fn=install_default_piper_voice,
+            inputs=[],
+            outputs=[
+                *param_widget_list,
+                voice_label_md,
+                piper_voice_status_md,
+                piper_speed_note_md,
+                warnings_md,
+                install_logs_box,
+            ],
+        )
+        if "voice_id" in param_widgets:
+            param_widgets["voice_id"].change(
+                fn=handle_voice_change,
+                inputs=[
+                    engine_dropdown,
+                    param_widgets["voice_id"],
+                    language_dropdown,
+                    chatterbox_mode_dropdown,
+                    chunk_state,
+                    *param_widget_list,
+                ],
+                outputs=[
+                    language_dropdown,
+                    lang_locked_md,
+                    voice_label_md,
+                    piper_speed_note_md,
+                    warnings_md,
+                    *param_widget_list,
+                ],
+            )
+        uninstall_backend_btn.click(
+            fn=handle_uninstall_backend,
+            inputs=[engine_dropdown],
+            outputs=[
+                engine_status_md,
+                install_backend_btn,
+                uninstall_backend_btn,
+                generate_btn,
+                install_logs_box,
+            ],
         )
         text_input.change(
             fn=mark_chunk_dirty,
@@ -1922,12 +2963,25 @@ def build_ui() -> gr.Blocks:
             inputs=[preset_dropdown, logs_box],
             outputs=[
                 ref_dropdown,
+                ref_support_note,
                 output_dir_box,
                 filename_box,
                 timestamp_toggle,
-                model_mode_dropdown,
+                engine_dropdown,
                 language_dropdown,
-                multilang_cfg_slider,
+                lang_locked_md,
+                engine_status_md,
+                install_backend_btn,
+                uninstall_backend_btn,
+                generate_btn,
+                voice_label_md,
+                piper_voice_status_md,
+                piper_refresh_button,
+                piper_install_voice_button,
+                piper_catalog_md,
+                piper_speed_note_md,
+                warnings_md,
+                *param_widget_list,
                 comma_pause_slider,
                 period_pause_slider,
                 semicolon_pause_slider,
@@ -1939,10 +2993,6 @@ def build_ui() -> gr.Blocks:
                 max_est_seconds_slider,
                 disable_newline_chunking_toggle,
                 verbose_logs_toggle,
-                exaggeration_slider,
-                cfg_slider,
-                temperature_slider,
-                repetition_slider,
                 fade_slider,
                 zero_cross_slider,
                 silence_threshold_slider,
@@ -1962,9 +3012,8 @@ def build_ui() -> gr.Blocks:
                 output_dir_box,
                 filename_box,
                 timestamp_toggle,
-                model_mode_dropdown,
                 language_dropdown,
-                multilang_cfg_slider,
+                engine_dropdown,
                 comma_pause_slider,
                 period_pause_slider,
                 semicolon_pause_slider,
@@ -1976,16 +3025,13 @@ def build_ui() -> gr.Blocks:
                 max_est_seconds_slider,
                 disable_newline_chunking_toggle,
                 verbose_logs_toggle,
-                exaggeration_slider,
-                cfg_slider,
-                temperature_slider,
-                repetition_slider,
                 fade_slider,
                 zero_cross_slider,
                 silence_threshold_slider,
                 silence_min_ms_slider,
                 confirm_state,
                 logs_box,
+                *param_widget_list,
             ],
             outputs=[
                 preset_dropdown,
@@ -2032,9 +3078,8 @@ def build_ui() -> gr.Blocks:
                 output_dir_box,
                 filename_box,
                 timestamp_toggle,
-                model_mode_dropdown,
+                engine_dropdown,
                 language_dropdown,
-                multilang_cfg_slider,
                 comma_pause_slider,
                 period_pause_slider,
                 semicolon_pause_slider,
@@ -2046,16 +3091,13 @@ def build_ui() -> gr.Blocks:
                 max_est_seconds_slider,
                 disable_newline_chunking_toggle,
                 verbose_logs_toggle,
-                exaggeration_slider,
-                cfg_slider,
-                temperature_slider,
-                repetition_slider,
                 fade_slider,
                 zero_cross_slider,
                 silence_threshold_slider,
                 silence_min_ms_slider,
                 chunk_state,
                 logs_box,
+                *param_widget_list,
             ],
             outputs=[
                 adjusted_text_box,

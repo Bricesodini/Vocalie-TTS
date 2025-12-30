@@ -1,10 +1,13 @@
 # Python / virtualenv
 .venv/
+.venvs/
 __pycache__/
 *.pyc
+.DS_Store
 
 # Local app artifacts
 output/
 Ref_audio/
 .state/
 presets/
+.assets/

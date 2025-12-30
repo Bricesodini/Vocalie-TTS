@@ -24,8 +24,33 @@ def _read_json(path: Path) -> Dict:
         return {}
 
 
+def migrate_state(data: Dict) -> Dict:
+    if not isinstance(data, dict):
+        return {}
+    engines = data.get("engines")
+    if not isinstance(engines, dict):
+        engines = {}
+    engine_id = data.get("last_tts_engine") or "chatterbox"
+    engine_cfg = engines.get(engine_id)
+    if not isinstance(engine_cfg, dict):
+        engine_cfg = {}
+    params = engine_cfg.get("params")
+    if not isinstance(params, dict):
+        params = {}
+    if "last_chatterbox_mode" in data and "chatterbox_mode" not in params:
+        params["chatterbox_mode"] = data.get("last_chatterbox_mode")
+    if "last_multilang_cfg_weight" in data and "multilang_cfg_weight" not in params:
+        params["multilang_cfg_weight"] = data.get("last_multilang_cfg_weight")
+    language = engine_cfg.get("language") or data.get("last_tts_language") or "fr-FR"
+    engine_cfg["language"] = language
+    engine_cfg["params"] = params
+    engines[engine_id] = engine_cfg
+    data["engines"] = engines
+    return data
+
+
 def load_state() -> Dict:
-    return _read_json(STATE_FILE)
+    return migrate_state(_read_json(STATE_FILE))
 
 
 def save_state(data: Dict) -> None:
@@ -58,19 +83,26 @@ def ensure_default_presets() -> None:
             "max_words_without_terminator": 35,
             "max_est_seconds_per_chunk": 10.0,
             "disable_newline_chunking": False,
-            "tts_model_mode": "fr_finetune",
-            "tts_language": "fr-FR",
-            "multilang_cfg_weight": 0.5,
+            "tts_engine": "chatterbox",
             "comma_pause_ms": 200,
             "period_pause_ms": 350,
             "semicolon_pause_ms": 300,
             "colon_pause_ms": 300,
             "dash_pause_ms": 250,
             "newline_pause_ms": 300,
-            "exaggeration": 0.5,
-            "cfg_weight": 0.6,
-            "temperature": 0.5,
-            "repetition_penalty": 1.35,
+            "engines": {
+                "chatterbox": {
+                    "language": "fr-FR",
+                    "params": {
+                        "chatterbox_mode": "fr_finetune",
+                        "multilang_cfg_weight": 0.5,
+                        "exaggeration": 0.5,
+                        "cfg_weight": 0.6,
+                        "temperature": 0.5,
+                        "repetition_penalty": 1.35,
+                    },
+                }
+            },
         }
         save_preset(default_name, data)
     stable_name = "stable-long-form"
@@ -86,13 +118,20 @@ def ensure_default_presets() -> None:
             "max_words_without_terminator": 32,
             "max_est_seconds_per_chunk": 9.0,
             "disable_newline_chunking": False,
-            "tts_model_mode": "fr_finetune",
-            "tts_language": "fr-FR",
-            "multilang_cfg_weight": 0.5,
-            "exaggeration": 0.45,
-            "cfg_weight": 0.75,
-            "temperature": 0.35,
-            "repetition_penalty": 1.35,
+            "tts_engine": "chatterbox",
+            "engines": {
+                "chatterbox": {
+                    "language": "fr-FR",
+                    "params": {
+                        "chatterbox_mode": "fr_finetune",
+                        "multilang_cfg_weight": 0.5,
+                        "exaggeration": 0.45,
+                        "cfg_weight": 0.75,
+                        "temperature": 0.35,
+                        "repetition_penalty": 1.35,
+                    },
+                }
+            },
         }
         save_preset(stable_name, data)
     fidelity_name = "voice-fidelity"
@@ -108,20 +147,63 @@ def ensure_default_presets() -> None:
             "max_words_without_terminator": 40,
             "max_est_seconds_per_chunk": 12.0,
             "disable_newline_chunking": False,
-            "tts_model_mode": "fr_finetune",
-            "tts_language": "fr-FR",
-            "multilang_cfg_weight": 0.5,
-            "exaggeration": 0.5,
-            "cfg_weight": 0.6,
-            "temperature": 0.5,
-            "repetition_penalty": 1.35,
+            "tts_engine": "chatterbox",
+            "engines": {
+                "chatterbox": {
+                    "language": "fr-FR",
+                    "params": {
+                        "chatterbox_mode": "fr_finetune",
+                        "multilang_cfg_weight": 0.5,
+                        "exaggeration": 0.5,
+                        "cfg_weight": 0.6,
+                        "temperature": 0.5,
+                        "repetition_penalty": 1.35,
+                    },
+                }
+            },
         }
         save_preset(fidelity_name, data)
 
 
 def load_preset(name: str) -> Dict:
     path = _preset_path(name)
-    return _read_json(path)
+    data = _read_json(path)
+    if not data:
+        return data
+    if "tts_engine" not in data:
+        data["tts_engine"] = "chatterbox"
+    engines = data.get("engines")
+    if not isinstance(engines, dict):
+        engines = {}
+    if "engines" not in data:
+        legacy_params = {}
+        if "tts_model_mode" in data:
+            legacy_params["chatterbox_mode"] = data.get("tts_model_mode")
+        if "multilang_cfg_weight" in data:
+            legacy_params["multilang_cfg_weight"] = data.get("multilang_cfg_weight")
+        if "exaggeration" in data:
+            legacy_params["exaggeration"] = data.get("exaggeration")
+        if "cfg_weight" in data:
+            legacy_params["cfg_weight"] = data.get("cfg_weight")
+        if "temperature" in data:
+            legacy_params["temperature"] = data.get("temperature")
+        if "repetition_penalty" in data:
+            legacy_params["repetition_penalty"] = data.get("repetition_penalty")
+        engines["chatterbox"] = {
+            "language": data.get("tts_language") or "fr-FR",
+            "params": legacy_params,
+        }
+    for engine_id, engine_cfg in engines.items():
+        if not isinstance(engine_cfg, dict):
+            engines[engine_id] = {"language": "fr-FR", "params": {}}
+            continue
+        if not engine_cfg.get("language"):
+            engine_cfg["language"] = "fr-FR"
+        if "params" not in engine_cfg or not isinstance(engine_cfg.get("params"), dict):
+            engine_cfg["params"] = {}
+        engines[engine_id] = engine_cfg
+    data["engines"] = engines
+    return data
 
 
 def save_preset(name: str, data: Dict) -> str:

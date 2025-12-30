@@ -8,30 +8,90 @@ from text_tools import ChunkInfo, SpeechSegment, estimate_duration
 from tts_engine import TTSEngine
 
 
-def test_handle_model_change_multilang_sets_language():
-    lang_update, cfg_update, state, status = app.handle_model_change(
-        "multilang",
+def test_handle_engine_change_enables_language():
+    updates = app.handle_engine_change(
+        "chatterbox",
         "en-US",
-        0.4,
+        "multilang",
         {"applied": True, "chunks": ["x"], "signature": ("sig",)},
     )
+    (
+        lang_update,
+        lang_locked_update,
+        state,
+        status,
+        ref_dropdown_update,
+        ref_note_update,
+        status_update,
+        install_btn_update,
+        uninstall_btn_update,
+        generate_btn_update,
+        _voice_label_update,
+        _piper_status_update,
+        _piper_refresh_update,
+        _piper_install_update,
+        _piper_catalog_update,
+        _piper_speed_note_update,
+        warning_update,
+        *param_updates,
+    ) = updates
+    param_keys = app.all_param_keys()
+    mode_update = param_updates[param_keys.index("chatterbox_mode")]
+    assert mode_update["value"] == "multilang"
     assert lang_update["value"] == "en-US"
     assert lang_update["visible"] is True
-    assert cfg_update["visible"] is True
+    assert lang_locked_update["visible"] is False
+    assert warning_update["value"] == ""
+    assert isinstance(ref_note_update, dict)
+    assert isinstance(ref_dropdown_update, dict)
+    assert isinstance(status_update, dict)
+    assert isinstance(install_btn_update, dict)
+    assert isinstance(uninstall_btn_update, dict)
+    assert isinstance(generate_btn_update, dict)
     assert state["applied"] is False
     assert status == "Etat: non appliqué"
 
 
-def test_handle_model_change_fr_forces_language():
-    lang_update, cfg_update, state, status = app.handle_model_change(
+def test_handle_engine_change_fr_keeps_language_visible():
+    updates = app.handle_engine_change(
+        "chatterbox",
+        "fr-FR",
         "fr_finetune",
-        "en-US",
-        0.4,
         {"applied": True, "chunks": ["x"], "signature": ("sig",)},
     )
+    (
+        lang_update,
+        lang_locked_update,
+        state,
+        status,
+        ref_dropdown_update,
+        ref_note_update,
+        status_update,
+        install_btn_update,
+        uninstall_btn_update,
+        generate_btn_update,
+        _voice_label_update,
+        _piper_status_update,
+        _piper_refresh_update,
+        _piper_install_update,
+        _piper_catalog_update,
+        _piper_speed_note_update,
+        warning_update,
+        *param_updates,
+    ) = updates
+    param_keys = app.all_param_keys()
+    mode_update = param_updates[param_keys.index("chatterbox_mode")]
+    assert mode_update["value"] == "fr_finetune"
     assert lang_update["value"] == "fr-FR"
     assert lang_update["visible"] is False
-    assert cfg_update["visible"] is False
+    assert lang_locked_update["visible"] is True
+    assert warning_update["value"] == ""
+    assert isinstance(ref_note_update, dict)
+    assert isinstance(ref_dropdown_update, dict)
+    assert isinstance(status_update, dict)
+    assert isinstance(install_btn_update, dict)
+    assert isinstance(uninstall_btn_update, dict)
+    assert isinstance(generate_btn_update, dict)
     assert state["applied"] is False
     assert status == "Etat: non appliqué"
 
