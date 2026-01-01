@@ -17,6 +17,10 @@ def test_output_name_includes_engine_slug_when_enabled():
     assert "__chatterbox-multilang" in name
 
 
+def test_slugify_accepts_int():
+    assert "123" in get_engine_slug(123, {})
+
+
 def test_preset_roundtrip_includes_flag(monkeypatch, tmp_path):
     monkeypatch.setattr(state_manager, "PRESET_DIR", tmp_path)
     data = {"tts_engine": "chatterbox", "include_model_name": True}

@@ -4,8 +4,9 @@ import queue
 import app
 from backend_install.manifests import get_manifest
 from tts_backends import get_backend
-from tts_backends.xtts_backend import XTTSBackend
+from tts_backends.xtts_backend import XTTSBackend, _extract_xtts_segments
 from tts_backends import xtts_runner
+import soundfile as sf
 
 
 def test_xtts_manifest_exists():
@@ -56,11 +57,17 @@ def test_xtts_runner_forces_cpu_on_macos_arm():
     assert xtts_runner.force_cpu_for_platform("Linux", "x86_64") is False
 
 
+def test_extract_xtts_segments_from_log():
+    log_text = " > Using model: xtts\n > Text splitted to sentences.\n['Bonjour.', 'Salut.']\n"
+    segments = _extract_xtts_segments(log_text)
+    assert segments == ["Bonjour.", "Salut."]
+
+
 def _dummy_context(monkeypatch, captured):
     def fake_worker(payload, result_queue):
         out_path = Path(payload["out_path"])
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_bytes(b"")
+        sf.write(out_path, [0.0, 0.0, 0.0], 24000)
         captured["payload"] = payload
         result_queue.put({"status": "ok", "meta": {}})
 
@@ -109,22 +116,12 @@ def test_payload_filters_params_for_xtts(monkeypatch, tmp_path):
         False,
         "xtts",
         "fr-FR",
-        200,
-        350,
-        300,
-        300,
-        250,
-        300,
-        2,
-        10,
-        10.0,
+        0,
         False,
         False,
-        50,
-        10,
-        0.002,
-        20,
-        {"applied": True, "chunks": [], "signature": None},
+        "final",
+        "",
+        "",
         None,
     ]
     param_values = [None] * len(app.all_param_keys())
@@ -136,3 +133,4 @@ def test_payload_filters_params_for_xtts(monkeypatch, tmp_path):
     assert "cfg_weight" not in engine_params
     assert "chatterbox_mode" not in engine_params
     assert "voice" not in engine_params
+    assert captured["payload"]["tts_backend"] == "xtts"

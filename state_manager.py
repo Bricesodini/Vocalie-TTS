@@ -27,6 +27,14 @@ def _read_json(path: Path) -> Dict:
 def migrate_state(data: Dict) -> Dict:
     if not isinstance(data, dict):
         return {}
+    if "direction_enabled" not in data:
+        data["direction_enabled"] = True
+    if "direction_source" not in data:
+        data["direction_source"] = "final"
+    if "inter_chunk_gap_ms" not in data:
+        data["inter_chunk_gap_ms"] = 120
+    if "inter_chunk_gap_ms" not in data:
+        data["inter_chunk_gap_ms"] = 120
     engines = data.get("engines")
     if not isinstance(engines, dict):
         engines = {}
@@ -79,18 +87,11 @@ def ensure_default_presets() -> None:
     default_name = "default"
     if not _preset_path(default_name).exists():
         data = {
-            "min_words_per_chunk": 16,
-            "max_words_without_terminator": 35,
-            "max_est_seconds_per_chunk": 10.0,
-            "disable_newline_chunking": False,
             "tts_engine": "chatterbox",
             "include_model_name": False,
-            "comma_pause_ms": 200,
-            "period_pause_ms": 350,
-            "semicolon_pause_ms": 300,
-            "colon_pause_ms": 300,
-            "dash_pause_ms": 250,
-            "newline_pause_ms": 300,
+            "direction_enabled": True,
+            "direction_source": "final",
+            "inter_chunk_gap_ms": 120,
             "engines": {
                 "chatterbox": {
                     "language": "fr-FR",
@@ -109,18 +110,11 @@ def ensure_default_presets() -> None:
     stable_name = "stable-long-form"
     if not _preset_path(stable_name).exists():
         data = {
-            "comma_pause_ms": 200,
-            "period_pause_ms": 350,
-            "semicolon_pause_ms": 300,
-            "colon_pause_ms": 300,
-            "dash_pause_ms": 250,
-            "newline_pause_ms": 250,
-            "min_words_per_chunk": 16,
-            "max_words_without_terminator": 32,
-            "max_est_seconds_per_chunk": 9.0,
-            "disable_newline_chunking": False,
             "tts_engine": "chatterbox",
             "include_model_name": False,
+            "direction_enabled": True,
+            "direction_source": "final",
+            "inter_chunk_gap_ms": 120,
             "engines": {
                 "chatterbox": {
                     "language": "fr-FR",
@@ -139,18 +133,11 @@ def ensure_default_presets() -> None:
     fidelity_name = "voice-fidelity"
     if not _preset_path(fidelity_name).exists():
         data = {
-            "comma_pause_ms": 200,
-            "period_pause_ms": 350,
-            "semicolon_pause_ms": 300,
-            "colon_pause_ms": 300,
-            "dash_pause_ms": 250,
-            "newline_pause_ms": 300,
-            "min_words_per_chunk": 16,
-            "max_words_without_terminator": 40,
-            "max_est_seconds_per_chunk": 12.0,
-            "disable_newline_chunking": False,
             "tts_engine": "chatterbox",
             "include_model_name": False,
+            "direction_enabled": True,
+            "direction_source": "final",
+            "inter_chunk_gap_ms": 120,
             "engines": {
                 "chatterbox": {
                     "language": "fr-FR",
@@ -177,6 +164,10 @@ def load_preset(name: str) -> Dict:
         data["tts_engine"] = "chatterbox"
     if "include_model_name" not in data:
         data["include_model_name"] = False
+    if "direction_enabled" not in data:
+        data["direction_enabled"] = True
+    if "direction_source" not in data:
+        data["direction_source"] = "final"
     engines = data.get("engines")
     if not isinstance(engines, dict):
         engines = {}

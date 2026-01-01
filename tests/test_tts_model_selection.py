@@ -13,13 +13,10 @@ def test_handle_engine_change_enables_language():
         "chatterbox",
         "en-US",
         "multilang",
-        {"applied": True, "chunks": ["x"], "signature": ("sig",)},
     )
     (
         lang_update,
         lang_locked_update,
-        state,
-        status,
         ref_dropdown_update,
         ref_note_update,
         status_update,
@@ -33,6 +30,9 @@ def test_handle_engine_change_enables_language():
         _piper_catalog_update,
         _piper_speed_note_update,
         warning_update,
+        _xtts_segmentation_update,
+        _inter_chunk_gap_update,
+        _inter_chunk_gap_help,
         *param_updates,
     ) = updates
     param_keys = app.all_param_keys()
@@ -48,8 +48,6 @@ def test_handle_engine_change_enables_language():
     assert isinstance(install_btn_update, dict)
     assert isinstance(uninstall_btn_update, dict)
     assert isinstance(generate_btn_update, dict)
-    assert state["applied"] is False
-    assert status == "Etat: non appliqué"
 
 
 def test_handle_engine_change_fr_keeps_language_visible():
@@ -57,13 +55,10 @@ def test_handle_engine_change_fr_keeps_language_visible():
         "chatterbox",
         "fr-FR",
         "fr_finetune",
-        {"applied": True, "chunks": ["x"], "signature": ("sig",)},
     )
     (
         lang_update,
         lang_locked_update,
-        state,
-        status,
         ref_dropdown_update,
         ref_note_update,
         status_update,
@@ -77,6 +72,9 @@ def test_handle_engine_change_fr_keeps_language_visible():
         _piper_catalog_update,
         _piper_speed_note_update,
         warning_update,
+        _xtts_segmentation_update,
+        _inter_chunk_gap_update,
+        _inter_chunk_gap_help,
         *param_updates,
     ) = updates
     param_keys = app.all_param_keys()
@@ -92,8 +90,6 @@ def test_handle_engine_change_fr_keeps_language_visible():
     assert isinstance(install_btn_update, dict)
     assert isinstance(uninstall_btn_update, dict)
     assert isinstance(generate_btn_update, dict)
-    assert state["applied"] is False
-    assert status == "Etat: non appliqué"
 
 
 def test_engine_backend_selection():

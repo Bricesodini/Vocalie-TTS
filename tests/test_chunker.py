@@ -1,7 +1,4 @@
-from text_tools import (
-    chunk_script,
-    compute_inter_chunk_pause_ms,
-)
+from text_tools import chunk_script
 
 
 def test_chunker_newline_split():
@@ -99,8 +96,3 @@ def test_min_words_clamped_to_20():
     assert len(chunks) == 2
     assert chunks[0].word_count == 21
 
-
-def test_smart_inter_chunk_pause():
-    assert compute_inter_chunk_pause_ms(0, 500) == 500
-    assert compute_inter_chunk_pause_ms(200, 500) == 300
-    assert compute_inter_chunk_pause_ms(600, 500) == 0

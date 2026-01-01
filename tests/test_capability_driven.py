@@ -9,6 +9,7 @@ from tts_backends.base import VoiceInfo, validate_param_schema
 from tts_backends.piper_backend import PiperBackend
 from tts_backends.chatterbox_backend import ChatterboxBackend
 import state_manager
+import soundfile as sf
 
 
 def test_param_schema_contract():
@@ -36,7 +37,6 @@ def test_engine_switch_coercion(monkeypatch):
         "chatterbox",
         "fr-FR",
         "multilang",
-        {"applied": True, "chunks": ["x"], "signature": ("sig",)},
     )
     param_updates = updates[-len(app.all_param_keys()):]
     param_keys = app.all_param_keys()
@@ -49,7 +49,7 @@ def _dummy_context(monkeypatch, captured):
     def fake_worker(payload, result_queue):
         out_path = Path(payload["out_path"])
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_bytes(b"")
+        sf.write(out_path, [0.0, 0.0, 0.0], 24000)
         captured["payload"] = payload
         result_queue.put({"status": "ok", "meta": {}})
 
@@ -102,22 +102,12 @@ def test_payload_filtering(monkeypatch, tmp_path):
         False,
         "piper",
         "fr-FR",
-        200,
-        350,
-        300,
-        300,
-        250,
-        300,
-        2,
-        10,
-        10.0,
+        0,
         False,
         False,
-        50,
-        10,
-        0.002,
-        20,
-        {"applied": True, "chunks": [], "signature": None},
+        "final",
+        "",
+        "",
         None,
     ]
     param_values = [None] * len(app.all_param_keys())
@@ -143,22 +133,12 @@ def test_payload_filtering(monkeypatch, tmp_path):
         False,
         "chatterbox",
         "fr-FR",
-        200,
-        350,
-        300,
-        300,
-        250,
-        300,
-        2,
-        10,
-        10.0,
+        120,
         False,
         False,
-        50,
-        10,
-        0.002,
-        20,
-        {"applied": True, "chunks": [], "signature": None},
+        "final",
+        "",
+        "",
         None,
     ]
     param_values = [None] * len(app.all_param_keys())
@@ -179,3 +159,32 @@ def test_preset_migration_engines(monkeypatch, tmp_path):
     data = state_manager.load_preset("legacy")
     assert "engines" in data
     assert data["engines"]["chatterbox"]["language"] == "fr-FR"
+
+
+def test_handle_generate_accepts_int_engine(monkeypatch, tmp_path):
+    captured = {}
+    _dummy_context(monkeypatch, captured)
+    monkeypatch.setattr(ChatterboxBackend, "is_available", classmethod(lambda cls: True))
+    args = [
+        "Bonjour",
+        "Bonjour",
+        False,
+        None,
+        str(tmp_path),
+        "test",
+        False,
+        False,
+        0,
+        "fr-FR",
+        0,
+        False,
+        False,
+        "final",
+        "",
+        "",
+        None,
+    ]
+    result = app.handle_generate(*args, *([None] * len(app.all_param_keys())))
+    assert isinstance(result, tuple)
+    log_md = result[app.HANDLE_GENERATE_LOG_INDEX]
+    assert "Sélection moteur invalide" in log_md

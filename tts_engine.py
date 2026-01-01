@@ -25,22 +25,12 @@ from safetensors.torch import load_file
 
 from text_tools import (
     ChunkInfo,
-    DEFAULT_COMMA_PAUSE_MS,
-    DEFAULT_COLON_PAUSE_MS,
-    DEFAULT_DASH_PAUSE_MS,
-    DEFAULT_MAX_COMMA_SUBSEGMENTS,
     DEFAULT_MAX_EST_SECONDS_PER_CHUNK,
     DEFAULT_MIN_WORDS_PER_CHUNK,
     DEFAULT_MAX_WORDS_WITHOUT_TERMINATOR,
-    DEFAULT_NEWLINE_PAUSE_MS,
-    DEFAULT_PERIOD_PAUSE_MS,
-    DEFAULT_SEMICOLON_PAUSE_MS,
     SpeechSegment,
     chunk_script,
-    ensure_strong_ending,
     render_clean_text_from_segments,
-    split_text_and_pauses,
-    stabilize_trailing_punct,
     strip_legacy_tokens,
 )
 from logging_utils import is_verbose, verbosity_context
@@ -129,60 +119,6 @@ def _start_at_zero_and_fade_in(
     start_idx = _find_zero_crossing_near(audio, 0, radius_frames)
     trimmed = audio[start_idx:].copy()
     return _fade_in(trimmed, fade_frames)
-
-
-def _apply_silence_edge_fades(
-    audio: np.ndarray,
-    sr: int,
-    silence_threshold: float,
-    silence_min_ms: int,
-    fade_ms: int,
-) -> np.ndarray:
-    if audio.size == 0:
-        return audio
-    fade_frames = int(sr * (fade_ms / 1000.0))
-    min_silence_frames = int(sr * (silence_min_ms / 1000.0))
-    if fade_frames <= 0 or min_silence_frames <= 0:
-        return audio
-    silence_mask = np.abs(audio) <= float(silence_threshold)
-    if not np.any(silence_mask):
-        return audio
-    audio = audio.copy()
-    in_silence = False
-    start_idx = 0
-    for idx, is_silent in enumerate(silence_mask):
-        if is_silent and not in_silence:
-            in_silence = True
-            start_idx = idx
-        elif not is_silent and in_silence:
-            end_idx = idx - 1
-            if end_idx - start_idx + 1 >= min_silence_frames:
-                fade_out_start = max(0, start_idx - fade_frames)
-                fade_out_end = start_idx
-                fade_in_start = end_idx + 1
-                fade_in_end = min(len(audio), fade_in_start + fade_frames)
-                if fade_out_end > fade_out_start:
-                    audio[fade_out_start:fade_out_end] = _fade_out(
-                        audio[fade_out_start:fade_out_end],
-                        fade_out_end - fade_out_start,
-                    )
-                if fade_in_end > fade_in_start:
-                    audio[fade_in_start:fade_in_end] = _fade_in(
-                        audio[fade_in_start:fade_in_end],
-                        fade_in_end - fade_in_start,
-                    )
-            in_silence = False
-    if in_silence:
-        end_idx = len(audio) - 1
-        if end_idx - start_idx + 1 >= min_silence_frames:
-            fade_out_start = max(0, start_idx - fade_frames)
-            fade_out_end = start_idx
-            if fade_out_end > fade_out_start:
-                audio[fade_out_start:fade_out_end] = _fade_out(
-                    audio[fade_out_start:fade_out_end],
-                    fade_out_end - fade_out_start,
-                )
-    return audio
 
 
 def _ensure_repo_override() -> None:
@@ -365,85 +301,27 @@ class TTSEngine:
         language: Optional[str],
         language_kw_preference: str | None,
         log_language_kw: bool,
-        comma_pause_ms: int,
-        period_pause_ms: int,
-        semicolon_pause_ms: int,
-        colon_pause_ms: int,
-        dash_pause_ms: int,
-        newline_pause_ms: int,
-        max_subsegments: int,
-        suppress_final_pause: bool,
-        zero_cross_radius_ms: int,
-        fade_ms: int,
     ) -> tuple[np.ndarray, List[dict]]:
-        sr = self.sample_rate or (tts.sr if tts else 24000)
         cleaned = strip_legacy_tokens(text)
         cleaned = re.sub(r"([,;:!?])\s*(?=\S)", r"\1 ", cleaned)
-        segments, pause_events = split_text_and_pauses(
+        if not cleaned.strip():
+            return np.zeros(0, dtype=np.float32), []
+        should_log = bool(log_language_kw)
+        audio_chunk, lang_kw_used = self._synthesize_text(
+            tts,
             cleaned,
-            comma_pause_ms=int(comma_pause_ms),
-            period_pause_ms=int(period_pause_ms),
-            semicolon_pause_ms=int(semicolon_pause_ms),
-            colon_pause_ms=int(colon_pause_ms),
-            dash_pause_ms=int(dash_pause_ms),
-            newline_pause_ms=int(newline_pause_ms),
-            suppress_final_pause=bool(suppress_final_pause),
-            return_events=True,
+            audio_prompt_path,
+            exaggeration,
+            cfg_weight,
+            temperature,
+            repetition_penalty,
+            language,
+            language_kw_preference,
+            should_log,
         )
-        audio_chunks: List[np.ndarray] = []
-        segments = _prepare_segments_for_synthesis(segments)
-        if max_subsegments > 0 and len(segments) > max_subsegments:
-            segments = [seg for seg in segments if seg.kind == "text"]
-            pause_events = []
-        logged_kw = False
-        pending_fade_in = False
-        for segment in segments:
-            if segment.kind == "silence":
-                if audio_chunks:
-                    audio_chunks[-1] = _trim_to_zero_and_fade_out(
-                        audio_chunks[-1],
-                        sr,
-                        radius_ms=zero_cross_radius_ms,
-                        fade_ms=fade_ms,
-                    )
-                frames = int(sr * (segment.duration_ms / 1000.0))
-                if frames > 0:
-                    audio_chunks.append(np.zeros(frames, dtype=np.float32))
-                    pending_fade_in = True
-                continue
-            chunk_text = segment.content.strip()
-            if not chunk_text:
-                continue
-            should_log = log_language_kw and not logged_kw
-            audio_chunk, lang_kw_used = self._synthesize_text(
-                    tts,
-                    chunk_text,
-                    audio_prompt_path,
-                    exaggeration,
-                    cfg_weight,
-                    temperature,
-                    repetition_penalty,
-                    language,
-                    language_kw_preference,
-                    should_log,
-                )
-            if pending_fade_in:
-                audio_chunk = _start_at_zero_and_fade_in(
-                    audio_chunk,
-                    sr,
-                    radius_ms=zero_cross_radius_ms,
-                    fade_ms=fade_ms,
-                )
-                pending_fade_in = False
-            audio_chunks.append(audio_chunk)
-            if should_log and lang_kw_used:
-                LOGGER.info("multilang_lang_kw=%s", lang_kw_used)
-            if should_log:
-                logged_kw = True
-        pause_log = [{"symbol": evt.symbol, "duration_ms": evt.duration_ms} for evt in pause_events]
-        if not audio_chunks:
-            return np.zeros(0, dtype=np.float32), pause_log
-        return np.concatenate(audio_chunks), pause_log
+        if should_log and lang_kw_used:
+            LOGGER.info("multilang_lang_kw=%s", lang_kw_used)
+        return audio_chunk, []
 
     def generate(
         self,
@@ -456,17 +334,6 @@ class TTSEngine:
         tts_model_mode: str = "fr_finetune",
         tts_language: str = "fr-FR",
         multilang_cfg_weight: float = 0.5,
-        comma_pause_ms: int = DEFAULT_COMMA_PAUSE_MS,
-        period_pause_ms: int = DEFAULT_PERIOD_PAUSE_MS,
-        semicolon_pause_ms: int = DEFAULT_SEMICOLON_PAUSE_MS,
-        colon_pause_ms: int = DEFAULT_COLON_PAUSE_MS,
-        dash_pause_ms: int = DEFAULT_DASH_PAUSE_MS,
-        newline_pause_ms: int = DEFAULT_NEWLINE_PAUSE_MS,
-        max_comma_subsegments: int = DEFAULT_MAX_COMMA_SUBSEGMENTS,
-        zero_cross_radius_ms: int = ZERO_CROSS_RADIUS_MS,
-        fade_ms: int = FADE_MS,
-        silence_threshold: float = SILENCE_THRESHOLD,
-        silence_min_ms: int = SILENCE_MIN_MS,
         out_path: Optional[str] = None,
     ) -> tuple[str, int]:
         if not text.strip():
@@ -498,23 +365,6 @@ class TTSEngine:
             backend_language,
             "language_id" if tts_model_mode == "multilang" else None,
             tts_model_mode == "multilang",
-            int(comma_pause_ms),
-            int(period_pause_ms),
-            int(semicolon_pause_ms),
-            int(colon_pause_ms),
-            int(dash_pause_ms),
-            int(newline_pause_ms),
-            int(max_comma_subsegments),
-            False,
-            int(zero_cross_radius_ms),
-            int(fade_ms),
-        )
-        audio = _apply_silence_edge_fades(
-            audio,
-            self.sample_rate or tts.sr,
-            float(silence_threshold),
-            int(silence_min_ms),
-            int(fade_ms),
         )
 
         if out_path is None:
@@ -541,21 +391,9 @@ class TTSEngine:
         tts_model_mode: str = "fr_finetune",
         tts_language: str = "fr-FR",
         multilang_cfg_weight: float = 0.5,
-        comma_pause_ms: int = DEFAULT_COMMA_PAUSE_MS,
-        period_pause_ms: int = DEFAULT_PERIOD_PAUSE_MS,
-        semicolon_pause_ms: int = DEFAULT_SEMICOLON_PAUSE_MS,
-        colon_pause_ms: int = DEFAULT_COLON_PAUSE_MS,
-        dash_pause_ms: int = DEFAULT_DASH_PAUSE_MS,
-        newline_pause_ms: int = DEFAULT_NEWLINE_PAUSE_MS,
         min_words_per_chunk: int = DEFAULT_MIN_WORDS_PER_CHUNK,
         max_words_without_terminator: int = DEFAULT_MAX_WORDS_WITHOUT_TERMINATOR,
         max_est_seconds_per_chunk: float = DEFAULT_MAX_EST_SECONDS_PER_CHUNK,
-        max_comma_subsegments: int = DEFAULT_MAX_COMMA_SUBSEGMENTS,
-        stabilize_punctuation: bool = True,
-        zero_cross_radius_ms: int = ZERO_CROSS_RADIUS_MS,
-        fade_ms: int = FADE_MS,
-        silence_threshold: float = SILENCE_THRESHOLD,
-        silence_min_ms: int = SILENCE_MIN_MS,
     ) -> tuple[str, int, Dict]:
         if not script.strip():
             raise ValueError("Le texte est vide.")
@@ -591,34 +429,13 @@ class TTSEngine:
         clean_texts: List[str] = []
         retries: List[bool] = []
         boundary_kinds: List[str | None] = []
-        boundary_pauses: List[int] = []
         comma_counts: List[int] = []
-        punct_fixes: List[str | None] = []
-        pause_events_by_chunk: List[List[dict]] = []
-
-        pending_fade_in = False
         for idx, chunk_info in enumerate(chunks, start=1):
             chunk_segments = list(chunk_info.segments)
-            ensure_strong_ending(chunk_segments)
             clean_text = render_clean_text_from_segments(chunk_segments)
-            fix_note = None
-            injected_hard = False
-            if stabilize_punctuation:
-                fixed_text, fix_note = stabilize_trailing_punct(clean_text)
-                clean_text = fixed_text
-                if fix_note:
-                    injected_hard = True
-            boundary_kind = chunk_info.boundary_kind
-            if stabilize_punctuation and boundary_kind in (None, "hard") and not clean_text.rstrip().endswith(
-                (".", "!", "?", "…")
-            ):
-                clean_text = clean_text.rstrip() + "."
-                injected_hard = True
-                fix_note = "hard '.' injected"
-            punct_fixes.append(fix_note)
             clean_texts.append(clean_text)
             comma_counts.append(clean_text.count(","))
-            audio, pause_events = self._build_audio_from_text(
+            audio, _ = self._build_audio_from_text(
                 tts,
                 clean_text,
                 audio_prompt_path,
@@ -629,18 +446,7 @@ class TTSEngine:
                 backend_language,
                 "language_id" if tts_model_mode == "multilang" else None,
                 tts_model_mode == "multilang",
-                int(comma_pause_ms),
-                int(period_pause_ms),
-                int(semicolon_pause_ms),
-                int(colon_pause_ms),
-                int(dash_pause_ms),
-                int(newline_pause_ms),
-                int(max_comma_subsegments),
-                True,
-                int(zero_cross_radius_ms),
-                int(fade_ms),
             )
-            pause_events_by_chunk.append(pause_events)
             duration = len(audio) / sr
             retried = False
             if len(clean_text) > 80 and duration < 1.2:
@@ -650,7 +456,7 @@ class TTSEngine:
                     idx,
                 )
                 base_duration = duration
-                audio, pause_events = self._build_audio_from_text(
+                audio_retry, _ = self._build_audio_from_text(
                     tts,
                     clean_text,
                     audio_prompt_path,
@@ -661,73 +467,20 @@ class TTSEngine:
                     backend_language,
                     "language_id" if tts_model_mode == "multilang" else None,
                     tts_model_mode == "multilang",
-                    int(comma_pause_ms),
-                    int(period_pause_ms),
-                    int(semicolon_pause_ms),
-                    int(colon_pause_ms),
-                    int(dash_pause_ms),
-                    int(newline_pause_ms),
-                    int(max_comma_subsegments),
-                    True,
-                    int(zero_cross_radius_ms),
-                    int(fade_ms),
                 )
-                pause_events_by_chunk[-1] = pause_events
-                duration = len(audio) / sr
-                if duration > base_duration:
+                duration_retry = len(audio_retry) / sr
+                if duration_retry > base_duration:
+                    audio = audio_retry
+                    duration = duration_retry
                     LOGGER.info("retry success (chunk %s)", idx)
                 else:
                     LOGGER.info("retry failed (kept first) (chunk %s)", idx)
             retries.append(retried)
             durations.append(duration)
-            if pending_fade_in:
-                audio = _start_at_zero_and_fade_in(
-                    audio,
-                    sr,
-                    radius_ms=zero_cross_radius_ms,
-                    fade_ms=fade_ms,
-                )
-                pending_fade_in = False
             audio_chunks.append(audio)
-            boundary_kind = chunk_info.boundary_kind
-            if stabilize_punctuation and injected_hard:
-                boundary_kind = "terminator"
-            boundary_pause = 0
-            if boundary_kind == "newline":
-                boundary_pause = int(newline_pause_ms)
-            elif boundary_kind == "terminator":
-                boundary_pause = int(period_pause_ms)
-            elif boundary_kind == ";":
-                boundary_pause = int(semicolon_pause_ms)
-            elif boundary_kind == ":":
-                boundary_pause = int(colon_pause_ms)
-            elif boundary_kind in ("—", "-"):
-                boundary_pause = int(dash_pause_ms)
-            elif boundary_kind == ",":
-                boundary_pause = int(comma_pause_ms)
-            boundary_kinds.append(boundary_kind)
-            boundary_pauses.append(boundary_pause)
-            if idx < len(chunks):
-                if audio_chunks:
-                    audio_chunks[-1] = _trim_to_zero_and_fade_out(
-                        audio_chunks[-1],
-                        sr,
-                        radius_ms=zero_cross_radius_ms,
-                        fade_ms=fade_ms,
-                    )
-                if boundary_pause > 0:
-                    frames = int(sr * (boundary_pause / 1000.0))
-                    audio_chunks.append(np.zeros(frames, dtype=np.float32))
-                pending_fade_in = True
+            boundary_kinds.append(chunk_info.boundary_kind)
 
         final_audio = np.concatenate(audio_chunks) if audio_chunks else np.zeros(0, dtype=np.float32)
-        final_audio = _apply_silence_edge_fades(
-            final_audio,
-            sr,
-            float(silence_threshold),
-            int(silence_min_ms),
-            int(fade_ms),
-        )
         out_path = str(Path(out_path).expanduser().resolve())
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         sf.write(out_path, final_audio, sr)
@@ -737,10 +490,7 @@ class TTSEngine:
             "clean_texts": clean_texts,
             "retries": retries,
             "boundary_kinds": boundary_kinds,
-            "boundary_pauses": boundary_pauses,
             "comma_counts": comma_counts,
-            "punct_fixes": punct_fixes,
-            "pause_events": pause_events_by_chunk,
             "tts_model_mode": tts_model_mode,
             "requested_language_bcp47": requested_language,
             "backend_language_id": backend_language,
@@ -893,63 +643,4 @@ __all__ = [
     "FADE_MS",
     "SILENCE_THRESHOLD",
     "SILENCE_MIN_MS",
-    "post_process_audio_file",
 ]
-
-
-def post_process_audio_file(
-    path: str,
-    *,
-    zero_cross_radius_ms: int = ZERO_CROSS_RADIUS_MS,
-    fade_ms: int = FADE_MS,
-    silence_threshold: float = SILENCE_THRESHOLD,
-    silence_min_ms: int = SILENCE_MIN_MS,
-) -> bool:
-    try:
-        audio, sr = sf.read(path, dtype="float32")
-    except Exception as exc:
-        LOGGER.warning("post_process_failed_read: %s", exc)
-        return False
-    if getattr(audio, "size", 0) == 0:
-        LOGGER.warning("post_process_empty_audio")
-        return False
-
-    def _process_channel(channel: np.ndarray) -> np.ndarray:
-        processed = _start_at_zero_and_fade_in(
-            channel,
-            sr,
-            radius_ms=int(zero_cross_radius_ms),
-            fade_ms=int(fade_ms),
-        )
-        processed = _trim_to_zero_and_fade_out(
-            processed,
-            sr,
-            radius_ms=int(zero_cross_radius_ms),
-            fade_ms=int(fade_ms),
-        )
-        return _apply_silence_edge_fades(
-            processed,
-            sr,
-            float(silence_threshold),
-            int(silence_min_ms),
-            int(fade_ms),
-        )
-
-    if audio.ndim == 1:
-        processed = _process_channel(audio)
-    else:
-        channels = []
-        for idx in range(audio.shape[1]):
-            channels.append(_process_channel(audio[:, idx]))
-        min_len = min(len(ch) for ch in channels) if channels else 0
-        if min_len == 0:
-            LOGGER.warning("post_process_empty_audio")
-            return False
-        processed = np.stack([ch[:min_len] for ch in channels], axis=1)
-
-    try:
-        sf.write(path, processed, sr)
-    except Exception as exc:
-        LOGGER.warning("post_process_failed_write: %s", exc)
-        return False
-    return True

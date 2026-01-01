@@ -1,15 +1,21 @@
 from pathlib import Path
+
 import queue
 
-import pytest
 import soundfile as sf
 
 import app
 from tts_backends.chatterbox_backend import ChatterboxBackend
-from text_tools import chunk_script as real_chunk_script
 
 
-def test_handle_generate_uses_adjusted_text(monkeypatch, tmp_path):
+def test_preview_written_to_work_dir(monkeypatch, tmp_path):
+    work_dir = tmp_path / "work"
+    tmp_dir = work_dir / ".tmp"
+    tmp_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(app, "WORK_DIR", work_dir)
+    monkeypatch.setattr(app, "TMP_DIR", tmp_dir)
+
     def fake_worker(payload, result_queue):
         out_path = Path(payload["out_path"])
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -51,30 +57,22 @@ def test_handle_generate_uses_adjusted_text(monkeypatch, tmp_path):
         def Process(self, target, args):
             return DummyProcess(target, args)
 
-    captured = {}
-
-    def spy_chunk_script(script, **kwargs):
-        captured["script"] = script
-        return real_chunk_script(script, **kwargs)
-
     monkeypatch.setattr(app, "_generate_longform_worker", fake_worker)
     monkeypatch.setattr(app.mp, "get_context", lambda *_args, **_kwargs: DummyContext())
     monkeypatch.setattr(ChatterboxBackend, "is_available", classmethod(lambda cls: True))
-    monkeypatch.setattr(app, "prepare_adjusted_text", lambda *_args, **_kwargs: ("Texte Ajuste", []))
-    monkeypatch.setattr(app, "chunk_script", spy_chunk_script)
 
     chunk_state = {"applied": False, "chunks": [], "signature": None}
     args = [
-        "RAW",
-        "RAW",
-        True,
+        "Bonjour",
+        "Bonjour",
+        False,
         None,
         str(tmp_path),
         "test",
         False,
         False,
-        True,
-        True,
+        False,
+        False,
         "disabled",
         True,
         True,
@@ -98,8 +96,12 @@ def test_handle_generate_uses_adjusted_text(monkeypatch, tmp_path):
         chunk_state,
         None,
     ]
-    app.handle_generate(*args, *([None] * len(app.all_param_keys())))
-    assert captured.get("script") == "Texte Ajuste"
+    result = app.handle_generate(*args, *([None] * len(app.all_param_keys())))
+    preview_path = result[1]
+    session_state = result[-1]
+    session_preview = Path(session_state["dir"]) / "preview" / app.SESSION_PREVIEW_FILENAME
+    assert preview_path == str(session_preview)
+    assert Path(preview_path).exists()
 import pytest
 
-pytest.skip("Legacy pause metadata removed in V2.", allow_module_level=True)
+pytest.skip("Legacy pause/marker preview checks removed in V2.", allow_module_level=True)

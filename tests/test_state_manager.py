@@ -1,15 +1,15 @@
 from state_manager import ensure_default_presets, load_preset
 
 
-def test_default_preset_min_words():
+def test_default_preset_defaults():
     ensure_default_presets()
     data = load_preset("default")
-    assert data.get("min_words_per_chunk") == 16
-    assert data.get("disable_newline_chunking") is False
     assert data.get("tts_engine") == "chatterbox"
-    assert data.get("tts_model_mode") == "fr_finetune"
-    assert data.get("tts_language") == "fr-FR"
-    assert data.get("multilang_cfg_weight") == 0.5
+    engine_cfg = data.get("engines", {}).get("chatterbox", {})
+    assert engine_cfg.get("language") == "fr-FR"
+    params = engine_cfg.get("params", {})
+    assert params.get("chatterbox_mode") == "fr_finetune"
+    assert params.get("multilang_cfg_weight") == 0.5
 
 
 def test_load_preset_migrates_legacy_format(tmp_path):

@@ -16,7 +16,8 @@ MAX_FILENAME_LENGTH = 80
 def slugify(value: str, fallback: str = "voix") -> str:
     """ASCII-only slug used when no filename is provided."""
 
-    normalized = unicodedata.normalize("NFKD", value or "")
+    value = "" if value is None else str(value)
+    normalized = unicodedata.normalize("NFKD", value)
     ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
     ascii_text = ascii_text.lower()
     ascii_text = re.sub(r"[^a-z0-9]+", "-", ascii_text).strip("-")
@@ -42,6 +43,7 @@ def sanitize_filename(name: str | None, max_length: int = MAX_FILENAME_LENGTH) -
 
 def get_engine_slug(engine_id: str, engine_meta: dict | None = None) -> str:
     engine_meta = engine_meta or {}
+    engine_id = "" if engine_id is None else str(engine_id)
     if engine_id == "chatterbox":
         mode = engine_meta.get("chatterbox_mode")
         if mode:

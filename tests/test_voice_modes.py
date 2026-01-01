@@ -27,9 +27,8 @@ def test_ref_audio_hidden_for_piper(monkeypatch):
         "piper",
         "fr-FR",
         "fr_finetune",
-        {"applied": True, "chunks": ["x"], "signature": ("sig",)},
     )
-    ref_dropdown_update = updates[4]
+    ref_dropdown_update = updates[2]
     assert ref_dropdown_update["visible"] is False
 
 
@@ -39,7 +38,6 @@ def test_voice_selector_hidden_for_chatterbox(monkeypatch):
         "chatterbox",
         "fr-FR",
         "fr_finetune",
-        {"applied": True, "chunks": ["x"], "signature": ("sig",)},
     )
     param_updates = updates[-len(app.all_param_keys()):]
     param_keys = app.all_param_keys()

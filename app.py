@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import dataclasses
+import json
 import logging
 import multiprocessing as mp
 import os
@@ -20,9 +21,12 @@ from threading import Lock
 from typing import Optional
 
 import gradio as gr
+import numpy as np
+import soundfile as sf
+import math
 
 from logging_utils import set_verbosity
-from output_paths import get_engine_slug, make_output_filename, prepare_output_paths
+from output_paths import ensure_unique_path, get_engine_slug, make_output_filename
 from refs import (
     ALLOWED_EXTENSIONS,
     DEFAULT_REF_DIR,
@@ -40,23 +44,18 @@ from state_manager import (
     save_state,
 )
 from text_tools import (
-    DEFAULT_COMMA_PAUSE_MS,
-    DEFAULT_COLON_PAUSE_MS,
-    DEFAULT_DASH_PAUSE_MS,
     DEFAULT_MAX_EST_SECONDS_PER_CHUNK,
-    DEFAULT_MAX_WORDS_WITHOUT_TERMINATOR,
-    DEFAULT_MIN_WORDS_PER_CHUNK,
-    DEFAULT_NEWLINE_PAUSE_MS,
-    DEFAULT_PERIOD_PAUSE_MS,
-    DEFAULT_SEMICOLON_PAUSE_MS,
     ChunkInfo,
+    MANUAL_CHUNK_MARKER,
     SpeechSegment,
     adjust_text_to_duration,
-    chunk_script,
-    estimate_duration_with_pauses,
+    count_words,
+    estimate_duration,
     normalize_text,
+    parse_manual_chunks,
     prepare_adjusted_text,
     render_clean_text,
+    render_clean_text_from_segments,
 )
 from backend_install.installer import run_install
 from backend_install.status import backend_status
@@ -68,14 +67,18 @@ from tts_backends.piper_assets import (
 )
 from tts_backends.xtts_backend import XTTS_ASSETS_DIR
 from tts_backends.base import BackendUnavailableError, coerce_language, pick_default_language
-from tts_engine import (
-    FADE_MS,
-    SILENCE_MIN_MS,
-    SILENCE_THRESHOLD,
-    TTSEngine,
-    ZERO_CROSS_RADIUS_MS,
+from tts_engine import SILENCE_MIN_MS, SILENCE_THRESHOLD, TTSEngine
+from tts_pipeline import _find_active_range, generate_raw_wav
+from session_manager import (
+    build_session_payload,
+    build_session_slug,
+    create_session_dir,
+    extract_session_texts,
+    get_take_path_global_raw,
+    load_session_json,
+    write_xtts_segments,
+    write_session_json,
 )
-from tts_pipeline import build_pause_plan, run_tts_pipeline
 
 
 logging.basicConfig(level=logging.INFO)
@@ -84,19 +87,19 @@ LOGGER = logging.getLogger("chatterbox_app")
 BASE_DIR = Path(__file__).resolve().parent
 LEXIQUE_PATH = BASE_DIR / "lexique_tts_fr.json"
 
-SAFE_PREVIEW_DIR = BASE_DIR / "output"
-SAFE_PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
-TMP_DIR = SAFE_PREVIEW_DIR / ".tmp"
+work_env = os.environ.get("VOCALIE_WORK_DIR")
+WORK_DIR = Path(work_env).expanduser() if work_env else BASE_DIR / "work"
+WORK_DIR.mkdir(parents=True, exist_ok=True)
+TMP_DIR = WORK_DIR / ".tmp"
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 
-output_env = os.environ.get("CHATTERBOX_OUT_DIR")
-if output_env:
-    DEFAULT_OUTPUT_DIR = Path(output_env).expanduser()
-else:
-    DEFAULT_OUTPUT_DIR = SAFE_PREVIEW_DIR
+output_env = os.environ.get("VOCALIE_OUTPUT_DIR") or os.environ.get("CHATTERBOX_OUT_DIR")
+DEFAULT_OUTPUT_DIR = Path(output_env).expanduser() if output_env else BASE_DIR / "output"
 DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+DEFAULT_EDIT_TARGET_DBFS = -1.0
 
 ENGINE: Optional[TTSEngine] = None
+_LOAD_PRESET_OUTPUT_COUNT: int | None = None
 
 _JOB_LOCK = Lock()
 _JOB_STATE = {
@@ -105,6 +108,7 @@ _JOB_STATE = {
     "current_final_path": None,
     "job_running": False,
 }
+HANDLE_GENERATE_LOG_INDEX = 4
 LANGUAGE_LABELS = {
     "fr-FR": "Français (fr-FR)",
     "en-US": "English US (en-US)",
@@ -419,6 +423,8 @@ def piper_voice_status_text(voices) -> str:
     return f"✅ {len(voices)} voix Piper installée(s)"
 
 
+
+
 def refresh_piper_voices() -> tuple:
     logs = []
     voices = list_piper_voices()
@@ -620,7 +626,7 @@ def _generate_longform_worker(payload: dict, result_queue: mp.Queue) -> None:
                 payload["chunks"] = _deserialize_chunks(payload["chunks"])
         request = dict(payload)
         request["tts_backend"] = backend_id
-        meta = run_tts_pipeline(request).meta
+        meta = generate_raw_wav(request).meta
         meta.setdefault("warnings", [])
         meta.setdefault("backend_id", backend_id)
         meta.setdefault("backend_lang", payload.get("lang"))
@@ -638,6 +644,317 @@ def ensure_output_dir(path: str | None) -> str:
     target = Path(path).expanduser() if path else DEFAULT_OUTPUT_DIR
     target.mkdir(parents=True, exist_ok=True)
     return str(target)
+
+
+def clean_work_dir(work_root: Path) -> int:
+    if os.environ.get("VOCALIE_KEEP_WORK") == "1":
+        LOGGER.info("work cleanup skipped (VOCALIE_KEEP_WORK=1)")
+        return 0
+    base_root = BASE_DIR.resolve()
+    work_root = Path(work_root).expanduser().resolve()
+    try:
+        work_root.relative_to(base_root)
+    except ValueError as exc:
+        raise ValueError(f"work_root must be inside repo: {work_root}") from exc
+    work_root.mkdir(parents=True, exist_ok=True)
+    sessions_dir = work_root / ".sessions"
+    tmp_dir = work_root / ".tmp"
+    tmp_dir_alt = work_root / "tmp"
+    removed_sessions = 0
+    if sessions_dir.exists():
+        for entry in sessions_dir.iterdir():
+            if entry.is_dir():
+                shutil.rmtree(entry, ignore_errors=True)
+                removed_sessions += 1
+            elif entry.is_file():
+                entry.unlink(missing_ok=True)
+                removed_sessions += 1
+    for tmp_path in (tmp_dir, tmp_dir_alt):
+        if tmp_path.exists():
+            for entry in tmp_path.iterdir():
+                if entry.is_dir():
+                    shutil.rmtree(entry, ignore_errors=True)
+                elif entry.is_file():
+                    entry.unlink(missing_ok=True)
+    LOGGER.info("work cleaned: %s sessions removed", removed_sessions)
+    return removed_sessions
+
+
+def _is_under_dir(candidate: Path, root: Path) -> bool:
+    try:
+        candidate.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _resolve_raw_take_path(session_dir: Path, session_data: dict) -> Path:
+    artifacts = session_data.get("artifacts")
+    if isinstance(artifacts, dict) and artifacts.get("raw_global"):
+        candidate = session_dir / str(artifacts["raw_global"])
+        if candidate.exists():
+            return candidate
+    active_take_data = session_data.get("active_take")
+    active_take = "v1"
+    if isinstance(active_take_data, dict):
+        active_take = active_take_data.get("global") or "v1"
+    elif isinstance(active_take_data, str):
+        active_take = active_take_data
+    legacy_raw = get_take_path_global_raw(session_dir, active_take)
+    if legacy_raw.exists():
+        return legacy_raw
+    return get_take_path_global_raw(session_dir, "v1")
+
+
+def _apply_minimal_edit(
+    raw_path: Path,
+    output_path: Path,
+    *,
+    trim_enabled: bool,
+    normalize_enabled: bool,
+    target_dbfs: float,
+    silence_threshold: float,
+    silence_min_ms: int,
+) -> dict:
+    audio, sr = sf.read(str(raw_path), always_2d=False)
+    if not isinstance(sr, (int, float)):
+        raise ValueError("Sample rate invalide pour l'édition.")
+    sr = int(sr)
+    audio = np.asarray(audio, dtype=np.float32)
+    trimmed = False
+    if trim_enabled:
+        mono = np.mean(audio, axis=1) if audio.ndim > 1 else audio
+        min_silence_frames = int(sr * (int(silence_min_ms) / 1000.0))
+        start_idx, end_idx = _find_active_range(
+            mono,
+            threshold=float(silence_threshold),
+            min_silence_frames=min_silence_frames,
+        )
+        if 0 <= start_idx < end_idx <= len(audio):
+            audio = audio[start_idx:end_idx]
+            trimmed = True
+    normalized = False
+    peak_before = float(np.max(np.abs(audio))) if audio.size else 0.0
+    target_peak = 10 ** (float(target_dbfs) / 20.0)
+    gain = 1.0
+    if normalize_enabled and peak_before > 0.0 and target_peak > 0.0:
+        gain = target_peak / peak_before
+        audio = audio * gain
+        normalized = True
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    audio = np.clip(audio, -1.0, 1.0)
+    sf.write(str(output_path), audio, sr, subtype="PCM_16")
+    return {
+        "trimmed": trimmed,
+        "normalized": normalized,
+        "target_dbfs": float(target_dbfs),
+        "peak_before": peak_before,
+        "peak_after": float(np.max(np.abs(audio))) if audio.size else 0.0,
+        "gain": gain,
+    }
+
+
+def update_edit_panel_state(
+    edit_enabled: bool,
+    trim_enabled: bool,
+    normalize_enabled: bool,
+):
+    panel_update = gr.update(visible=bool(edit_enabled))
+    button_update = gr.update(interactive=bool(edit_enabled and (trim_enabled or normalize_enabled)))
+    slider_update = gr.update(interactive=bool(edit_enabled and normalize_enabled))
+    return panel_update, button_update, slider_update
+
+
+def _resolve_direction_source_text(
+    source: str | None,
+    *,
+    original_text: str,
+    adjusted_text: str,
+    final_text: str,
+) -> str:
+    source = str(source or "final")
+    if source == "original":
+        return original_text
+    if source == "adjusted":
+        return adjusted_text
+    return final_text
+
+
+def handle_direction_load_snapshot(
+    direction_source: str | None,
+    original_text: str,
+    adjusted_text: str,
+    final_text: str,
+    log_text: str | None,
+):
+    snapshot = _resolve_direction_source_text(
+        direction_source,
+        original_text=original_text or "",
+        adjusted_text=adjusted_text or "",
+        final_text=final_text or "",
+    )
+    log_text = append_ui_log(f"Snapshot chargé (source={direction_source})", log_text)
+    return snapshot, log_text
+
+
+def handle_direction_preview(
+    direction_enabled: bool,
+    direction_source: str | None,
+    direction_snapshot_text: str | None,
+    final_text: str,
+    log_text: str | None,
+):
+    chunks, _chunk_mode, _direction_meta, log_text = _apply_direction_chunking(
+        direction_enabled=bool(direction_enabled),
+        direction_source=direction_source,
+        direction_snapshot_text=direction_snapshot_text,
+        tts_ready_text=final_text,
+        log_text=log_text,
+    )
+    preview = _build_chunk_preview(chunks) if chunks else ""
+    return preview, log_text
+
+
+def update_direction_controls(direction_enabled: bool, snapshot_text: str | None):
+    has_snapshot = bool(snapshot_text and snapshot_text.strip())
+    insert_update = gr.update(interactive=bool(direction_enabled and has_snapshot))
+    preview_update = gr.update(interactive=bool(direction_enabled and has_snapshot))
+    return insert_update, preview_update
+
+
+def append_chunk_marker(snapshot: str | None) -> str:
+    return snapshot or ""
+
+
+def handle_generate_edited_audio(
+    session_state: dict | None,
+    out_dir: str | None,
+    user_filename: str | None,
+    add_timestamp: bool,
+    include_model_name: bool,
+    trim_enabled: bool,
+    normalize_enabled: bool,
+    target_dbfs: float,
+    log_text: str | None,
+):
+    state = dict(session_state or {})
+    session_dir_value = state.get("dir")
+    if not session_dir_value:
+        return gr.update(), gr.update(), append_ui_log("Aucune session active.", log_text)
+    if not trim_enabled and not normalize_enabled:
+        return (
+            gr.update(),
+            gr.update(),
+            append_ui_log("Édition minimale: aucune option sélectionnée.", log_text),
+        )
+    session_dir = Path(session_dir_value)
+    try:
+        _session_path, session_data = load_session_json(session_dir)
+    except Exception as exc:
+        return gr.update(), gr.update(), append_ui_log(f"Session illisible: {exc}", log_text)
+    raw_path = _resolve_raw_take_path(session_dir, session_data)
+    if not raw_path.exists():
+        return gr.update(), gr.update(), append_ui_log("RAW introuvable.", log_text)
+    output_dir = Path(ensure_output_dir(out_dir))
+    _editorial, tts_ready, _prep_log = extract_session_texts(session_data)
+    engine_slug = session_data.get("engine_slug") or get_engine_slug(session_data.get("engine_id") or "tts", {})
+    filename = make_output_filename(
+        text=tts_ready,
+        ref_name=session_data.get("ref_name"),
+        user_filename=user_filename,
+        add_timestamp=bool(add_timestamp),
+        include_engine_slug=bool(include_model_name),
+        engine_slug=engine_slug,
+    )
+    edit_filename = f"{Path(filename).stem}_edit{Path(filename).suffix}"
+    output_path = ensure_unique_path(output_dir, edit_filename)
+    try:
+        meta = _apply_minimal_edit(
+            raw_path,
+            output_path,
+            trim_enabled=bool(trim_enabled),
+            normalize_enabled=bool(normalize_enabled),
+            target_dbfs=float(target_dbfs),
+            silence_threshold=SILENCE_THRESHOLD,
+            silence_min_ms=SILENCE_MIN_MS,
+        )
+    except Exception as exc:
+        return gr.update(), gr.update(), append_ui_log(f"Édition impossible: {exc}", log_text)
+    peak_before = float(meta.get("peak_before") or 0.0)
+    peak_after = float(meta.get("peak_after") or 0.0)
+    if peak_before > 0.0:
+        peak_before_dbfs = 20.0 * math.log10(peak_before)
+    else:
+        peak_before_dbfs = float("-inf")
+    if peak_after > 0.0:
+        peak_after_dbfs = 20.0 * math.log10(peak_after)
+    else:
+        peak_after_dbfs = float("-inf")
+    log_text = append_ui_log(
+        (
+            f"Édition minimale OK: {output_path} "
+            f"(trim={meta['trimmed']} normalize={meta['normalized']} target={meta['target_dbfs']:.1f}dBFS "
+            f"peak_before={peak_before_dbfs:.2f}dBFS peak_after={peak_after_dbfs:.2f}dBFS "
+            f"gain={meta['gain']:.3f})"
+        ),
+        log_text,
+    )
+    return str(output_path), str(output_path), log_text
+
+
+def handle_export_raw_to_output(
+    session_state: dict | None,
+    out_dir: str | None,
+    user_filename: str | None,
+    add_timestamp: bool,
+    include_model_name: bool,
+    log_text: str | None,
+):
+    state = dict(session_state or {})
+    session_dir_value = state.get("dir")
+    if not session_dir_value:
+        return gr.update(), append_ui_log("Aucune session active.", log_text)
+    session_dir = Path(session_dir_value)
+    try:
+        _session_path, session_data = load_session_json(session_dir)
+    except Exception as exc:
+        return gr.update(), append_ui_log(f"Session illisible: {exc}", log_text)
+    raw_path = _resolve_raw_take_path(session_dir, session_data)
+    if not raw_path.exists():
+        return gr.update(), append_ui_log("RAW introuvable.", log_text)
+    output_dir = Path(ensure_output_dir(out_dir))
+    _editorial, tts_ready, _prep_log = extract_session_texts(session_data)
+    engine_slug = session_data.get("engine_slug") or get_engine_slug(session_data.get("engine_id") or "tts", {})
+    filename = make_output_filename(
+        text=tts_ready,
+        ref_name=session_data.get("ref_name"),
+        user_filename=user_filename,
+        add_timestamp=bool(add_timestamp),
+        include_engine_slug=bool(include_model_name),
+        engine_slug=engine_slug,
+    )
+    raw_filename = f"{Path(filename).stem}_raw{Path(filename).suffix}"
+    output_path = ensure_unique_path(output_dir, raw_filename)
+    try:
+        shutil.copy2(raw_path, output_path)
+    except Exception as exc:
+        return gr.update(), append_ui_log(f"Export RAW impossible: {exc}", log_text)
+    log_text = append_ui_log(f"RAW exporté: {output_path}", log_text)
+    return str(output_path), log_text
+
+
+def handle_open_output_dir(out_dir: str | None, log_text: str | None):
+    output_dir = Path(ensure_output_dir(out_dir))
+    try:
+        if sys.platform.startswith("darwin"):
+            subprocess.run(["open", str(output_dir)], check=False)
+        elif os.name == "nt":
+            os.startfile(str(output_dir))  # type: ignore[attr-defined]
+        else:
+            subprocess.run(["xdg-open", str(output_dir)], check=False)
+    except Exception as exc:
+        return append_ui_log(f"Ouverture dossier impossible: {exc}", log_text)
+    return append_ui_log(f"Dossier output ouvert: {output_dir}", log_text)
 
 
 def _coerce_float(value, default: float) -> float:
@@ -731,25 +1048,25 @@ def update_clean_preview(text: str) -> str:
     return clean
 
 
-def update_estimated_duration(
-    text: str,
-    comma_pause_ms: int,
-    period_pause_ms: int,
-    semicolon_pause_ms: int,
-    colon_pause_ms: int,
-    dash_pause_ms: int,
-    newline_pause_ms: int,
-) -> str:
-    est = estimate_duration_with_pauses(
-        text,
-        comma_pause_ms=int(comma_pause_ms),
-        period_pause_ms=int(period_pause_ms),
-        semicolon_pause_ms=int(semicolon_pause_ms),
-        colon_pause_ms=int(colon_pause_ms),
-        dash_pause_ms=int(dash_pause_ms),
-        newline_pause_ms=int(newline_pause_ms),
-    )
-    return f"Durée estimée (avec pauses): {est:.1f}s"
+
+
+def _coerce_float(val, default=0.0):
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _coerce_int(val, default=0):
+    try:
+        return int(float(val))
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def update_estimated_duration(text: str) -> str:
+    est = estimate_duration(text)
+    return f"Durée estimée: {est:.1f}s"
 
 
 def format_adjustment_log(changes: list[str], enabled: bool) -> str:
@@ -797,12 +1114,6 @@ def handle_text_adjustment(
     text: str,
     auto_adjust: bool,
     show_adjust_log: bool,
-    comma_pause_ms: int,
-    period_pause_ms: int,
-    semicolon_pause_ms: int,
-    colon_pause_ms: int,
-    dash_pause_ms: int,
-    newline_pause_ms: int,
 ):
     persist_state(
         {
@@ -815,15 +1126,7 @@ def handle_text_adjustment(
     else:
         adjusted_text, changes = text or "", []
     clean_preview = render_clean_text(adjusted_text)
-    duration = update_estimated_duration(
-        adjusted_text,
-        comma_pause_ms=int(comma_pause_ms),
-        period_pause_ms=int(period_pause_ms),
-        semicolon_pause_ms=int(semicolon_pause_ms),
-        colon_pause_ms=int(colon_pause_ms),
-        dash_pause_ms=int(dash_pause_ms),
-        newline_pause_ms=int(newline_pause_ms),
-    )
+    duration = update_estimated_duration(adjusted_text)
     log_md = format_adjustment_log(changes, show_adjust_log and auto_adjust)
     return adjusted_text, clean_preview, duration, log_md
 
@@ -832,18 +1135,21 @@ def handle_load_preset(
     preset_name: str | None,
     log_text: str | None,
 ):
-    outputs = [gr.update() for _ in range(40 + len(all_param_keys()))]
+    output_count = _LOAD_PRESET_OUTPUT_COUNT or (25 + len(all_param_keys()))
+    outputs = [gr.update() for _ in range(output_count)]
     name_update = gr.update()
-    chunk_status = "Etat: non appliqué"
-    chunk_state = {"applied": False, "chunks": [], "signature": None}
     if not preset_name:
         log_text = append_log("Sélectionnez un preset à charger.", log_text)
-        return (*outputs, name_update, chunk_status, chunk_state, log_text)
+        outputs[-2:] = [name_update, log_text]
+        assert len(outputs) == output_count
+        return tuple(outputs)
 
     data = load_preset(preset_name)
     if not data:
         log_text = append_log(f"Preset introuvable: {preset_name}", log_text)
-        return (*outputs, name_update, chunk_status, chunk_state, log_text)
+        outputs[-2:] = [name_update, log_text]
+        assert len(outputs) == output_count
+        return tuple(outputs)
 
     refs = list_refs()
     ref_value = data.get("ref_name")
@@ -900,58 +1206,68 @@ def handle_load_preset(
     piper_catalog_update = gr.update(visible=engine_id == "piper")
     piper_speed_note = piper_speed_note_update(engine_id, final_voice, supports_speed)
     param_updates = build_param_updates(engine_id, engine_params, context)
-    updates = [
-        gr.update(value=ref_value, visible=bool(backend and backend.supports_ref_audio)),
-        ref_note_update,
-        gr.update(value=data.get("out_dir") or str(DEFAULT_OUTPUT_DIR)),
-        gr.update(value=data.get("user_filename", "")),
-        gr.update(value=bool(data.get("add_timestamp", True))),
-        gr.update(value=bool(data.get("include_model_name", False))),
-        gr.update(value=engine_id),
-        lang_update,
-        lang_locked_update,
-        gr.update(value=engine_status_markdown(engine_id)),
-        gr.update(visible=not backend_status(engine_id).get("installed")),
-        gr.update(visible=backend_status(engine_id).get("installed") and engine_id != "chatterbox"),
-        gr.update(interactive=backend_status(engine_id).get("installed")),
-        voice_label_update,
-        piper_status_update,
-        piper_refresh_update,
-        piper_install_update,
-        piper_catalog_update,
-        piper_speed_note,
-        warning_update,
-        *param_updates,
-        gr.update(value=int(data.get("comma_pause_ms", DEFAULT_COMMA_PAUSE_MS))),
-        gr.update(value=int(data.get("period_pause_ms", DEFAULT_PERIOD_PAUSE_MS))),
-        gr.update(value=int(data.get("semicolon_pause_ms", DEFAULT_SEMICOLON_PAUSE_MS))),
-        gr.update(value=int(data.get("colon_pause_ms", DEFAULT_COLON_PAUSE_MS))),
-        gr.update(value=int(data.get("dash_pause_ms", DEFAULT_DASH_PAUSE_MS))),
-        gr.update(value=int(data.get("newline_pause_ms", DEFAULT_NEWLINE_PAUSE_MS))),
-        gr.update(value=int(data.get("min_words_per_chunk", DEFAULT_MIN_WORDS_PER_CHUNK))),
-        gr.update(
-            value=int(data.get("max_words_without_terminator", DEFAULT_MAX_WORDS_WITHOUT_TERMINATOR))
-        ),
-        gr.update(value=float(data.get("max_est_seconds_per_chunk", DEFAULT_MAX_EST_SECONDS_PER_CHUNK))),
-        gr.update(value=bool(data.get("disable_newline_chunking", False))),
-        gr.update(value=bool(data.get("verbose_logs", False))),
-        gr.update(value=int(data.get("fade_ms", FADE_MS))),
-        gr.update(value=int(data.get("zero_cross_radius_ms", ZERO_CROSS_RADIUS_MS))),
-        gr.update(value=_coerce_float(data.get("silence_threshold"), SILENCE_THRESHOLD)),
-        gr.update(value=int(data.get("silence_min_ms", SILENCE_MIN_MS))),
-        gr.update(value=preset_name),
-    ]
+    xtts_split_note_update = gr.update(
+        value="Segmentation: XTTS native (recommandée)",
+        visible=engine_id == "xtts",
+    )
+    inter_chunk_gap_ms = data.get("inter_chunk_gap_ms")
+    if inter_chunk_gap_ms is None:
+        inter_chunk_gap_ms = 120
+    if engine_id == "chatterbox":
+        inter_chunk_gap_update = gr.update(value=int(inter_chunk_gap_ms), visible=True)
+        inter_chunk_gap_help = gr.update(visible=True)
+    else:
+        inter_chunk_gap_update = gr.update(value=0, visible=False)
+        inter_chunk_gap_help = gr.update(visible=False)
+    idx = 0
+
+    def put(value):
+        nonlocal idx
+        if idx < output_count:
+            outputs[idx] = value
+        idx += 1
+
+    put(gr.update(value=ref_value, visible=bool(backend and backend.supports_ref_audio)))
+    put(ref_note_update)
+    put(gr.update(value=data.get("out_dir") or str(DEFAULT_OUTPUT_DIR)))
+    put(gr.update(value=data.get("user_filename", "")))
+    put(gr.update(value=bool(data.get("add_timestamp", True))))
+    put(gr.update(value=bool(data.get("include_model_name", False))))
+    put(gr.update(value=engine_id))
+    put(lang_update)
+    put(lang_locked_update)
+    put(gr.update(value=engine_status_markdown(engine_id)))
+    put(gr.update(visible=not backend_status(engine_id).get("installed")))
+    put(gr.update(visible=backend_status(engine_id).get("installed") and engine_id != "chatterbox"))
+    put(gr.update(interactive=backend_status(engine_id).get("installed")))
+    put(voice_label_update)
+    put(piper_status_update)
+    put(piper_refresh_update)
+    put(piper_install_update)
+    put(piper_catalog_update)
+    put(piper_speed_note)
+    put(warning_update)
+    put(xtts_split_note_update)
+    put(inter_chunk_gap_update)
+    put(inter_chunk_gap_help)
+    for update in param_updates:
+        put(update)
+    put(gr.update(value=bool(data.get("verbose_logs", False))))
+    put(gr.update(value=preset_name))
     name_update = gr.update(value=preset_name)
     persist_state(
         {
             "last_preset": preset_name,
             "last_tts_engine": engine_id,
             "last_include_model_name": bool(data.get("include_model_name", False)),
+            "inter_chunk_gap_ms": int(inter_chunk_gap_ms),
         }
     )
     persist_engine_state(engine_id, language=final_lang, voice_id=final_voice, params=engine_params)
     log_text = append_log(f"Preset chargé: {preset_name}", log_text)
-    return (*updates, name_update, chunk_status, chunk_state, log_text)
+    outputs[-2:] = [name_update, log_text]
+    assert len(outputs) == output_count
+    return tuple(outputs)
 
 
 def handle_save_preset(
@@ -961,23 +1277,10 @@ def handle_save_preset(
     user_filename: str | None,
     add_timestamp: bool,
     include_model_name: bool,
+    inter_chunk_gap_ms: float,
     tts_language: str | None,
     tts_engine: str,
-    comma_pause_ms: int,
-    period_pause_ms: int,
-    semicolon_pause_ms: int,
-    colon_pause_ms: int,
-    dash_pause_ms: int,
-    newline_pause_ms: int,
-    min_words_per_chunk: int,
-    max_words_without_terminator: int,
-    max_est_seconds_per_chunk: float,
-    disable_newline_chunking: bool,
     verbose_logs: bool,
-    fade_ms: int,
-    zero_cross_radius_ms: int,
-    silence_threshold: float,
-    silence_min_ms: int,
     log_text: str | None,
     *param_values,
 ):
@@ -995,6 +1298,7 @@ def handle_save_preset(
         "add_timestamp": bool(add_timestamp),
         "tts_engine": str(tts_engine),
         "include_model_name": bool(include_model_name),
+        "inter_chunk_gap_ms": int(inter_chunk_gap_ms),
         "engines": {
             str(tts_engine): {
                 "language": str(tts_language or "fr-FR"),
@@ -1002,21 +1306,7 @@ def handle_save_preset(
                 "params": engine_params,
             }
         },
-        "comma_pause_ms": int(comma_pause_ms),
-        "period_pause_ms": int(period_pause_ms),
-        "semicolon_pause_ms": int(semicolon_pause_ms),
-        "colon_pause_ms": int(colon_pause_ms),
-        "dash_pause_ms": int(dash_pause_ms),
-        "newline_pause_ms": int(newline_pause_ms),
-        "min_words_per_chunk": int(min_words_per_chunk),
-        "max_words_without_terminator": int(max_words_without_terminator),
-        "max_est_seconds_per_chunk": float(max_est_seconds_per_chunk),
-        "disable_newline_chunking": bool(disable_newline_chunking),
         "verbose_logs": bool(verbose_logs),
-        "fade_ms": int(fade_ms),
-        "zero_cross_radius_ms": int(zero_cross_radius_ms),
-        "silence_threshold": float(silence_threshold),
-        "silence_min_ms": int(silence_min_ms),
     }
 
     try:
@@ -1070,17 +1360,6 @@ def handle_choose_output(current_path: str | None, log_text: str | None):
     return gr.update(value=chosen), log_text
 
 
-def handle_reset_chunk_defaults(log_text: str | None):
-    log_text = append_ui_log("Reset chunking defaults.", log_text)
-    return (
-        gr.update(value=DEFAULT_MIN_WORDS_PER_CHUNK),
-        gr.update(value=DEFAULT_MAX_WORDS_WITHOUT_TERMINATOR),
-        gr.update(value=DEFAULT_MAX_EST_SECONDS_PER_CHUNK),
-        gr.update(value=False),
-        log_text,
-    )
-
-
 def handle_toggle_verbose_logs(verbose: bool, log_text: str | None):
     set_verbosity(bool(verbose))
     persist_state({"last_verbose_logs": bool(verbose)})
@@ -1092,7 +1371,6 @@ def handle_engine_change(
     engine_id: str,
     language: str | None,
     chatterbox_mode: str,
-    chunk_state: dict | None,
 ):
     backend = get_backend(engine_id)
     if backend is None:
@@ -1153,6 +1431,15 @@ def handle_engine_change(
                 ],
             )
         )
+    inter_chunk_gap_ms = state_data.get("inter_chunk_gap_ms")
+    if inter_chunk_gap_ms is None:
+        inter_chunk_gap_ms = 120
+    if engine_id == "chatterbox":
+        inter_chunk_gap_update = gr.update(value=int(inter_chunk_gap_ms), visible=True)
+        inter_chunk_gap_help = gr.update(visible=True)
+    else:
+        inter_chunk_gap_update = gr.update(value=0, visible=False)
+        inter_chunk_gap_help = gr.update(visible=False)
     warning_update = gr.update(value=warning_md, visible=bool(warning_md))
     piper_status_update = gr.update(
         value=piper_voice_status_text(voices),
@@ -1162,14 +1449,19 @@ def handle_engine_change(
     piper_install_update = gr.update(visible=engine_id == "piper")
     piper_catalog_update = gr.update(visible=engine_id == "piper")
     piper_speed_note = piper_speed_note_update(engine_id, final_voice, supports_speed)
-    persist_state({"last_tts_engine": engine_id})
+    xtts_split_note_update = gr.update(
+        value="Segmentation: XTTS native (recommandée)",
+        visible=engine_id == "xtts",
+    )
+    persist_state(
+        {
+            "last_tts_engine": engine_id,
+        }
+    )
     persist_engine_state(engine_id, language=final_lang, voice_id=final_voice, params=engine_params)
-    state, status = mark_chunk_dirty(chunk_state)
     return (
         lang_update,
         lang_locked_update,
-        state,
-        status,
         gr.update(visible=bool(backend and backend.supports_ref_audio)),
         ref_note_update,
         *engine_status_updates(engine_id),
@@ -1180,6 +1472,9 @@ def handle_engine_change(
         piper_catalog_update,
         piper_speed_note,
         warning_update,
+        xtts_split_note_update,
+        inter_chunk_gap_update,
+        inter_chunk_gap_help,
         *param_updates,
     )
 
@@ -1189,7 +1484,6 @@ def handle_voice_change(
     voice_id: str | None,
     language: str | None,
     chatterbox_mode: str,
-    chunk_state: dict | None,
     *param_values,
 ):
     backend = get_backend(engine_id)
@@ -1240,7 +1534,6 @@ def handle_language_change(
     engine_id: str,
     language: str | None,
     chatterbox_mode: str,
-    chunk_state: dict | None,
 ):
     backend = get_backend(engine_id)
     if backend is None:
@@ -1255,14 +1548,12 @@ def handle_language_change(
     warning_md = language_warning(engine_id, language or "fr-FR", final_lang, did_fallback)
     warning_update = gr.update(value=warning_md, visible=bool(warning_md))
     persist_engine_state(engine_id, language=final_lang)
-    state, status = mark_chunk_dirty(chunk_state)
-    return lang_update, lang_locked_update, warning_update, state, status, *param_updates
+    return lang_update, lang_locked_update, warning_update, *param_updates
 
 
 def handle_chatterbox_mode_change(
     chatterbox_mode: str,
     language: str | None,
-    chunk_state: dict | None,
 ):
     coerced_mode = chatterbox_mode or "fr_finetune"
     backend = get_backend("chatterbox")
@@ -1283,8 +1574,7 @@ def handle_chatterbox_mode_change(
     merged_params = dict(state_params)
     merged_params.update(engine_params)
     persist_engine_state("chatterbox", language=final_lang, params=merged_params)
-    state, status = mark_chunk_dirty(chunk_state)
-    return lang_update, lang_locked_update, warning_update, state, status, *param_updates
+    return lang_update, lang_locked_update, warning_update, *param_updates
 
 
 def handle_install_backend(engine_id: str):
@@ -1308,22 +1598,6 @@ def handle_uninstall_backend(engine_id: str):
     return status_md, install_btn, uninstall_btn, generate_btn, gr.update(value=log_text)
 
 
-def _chunk_signature(
-    text: str,
-    min_words_per_chunk: int,
-    max_words_without_terminator: int,
-    max_est_seconds_per_chunk: float,
-    disable_newline_chunking: bool,
-) -> tuple:
-    return (
-        text.strip(),
-        int(min_words_per_chunk),
-        int(max_words_without_terminator),
-        float(max_est_seconds_per_chunk),
-        bool(disable_newline_chunking),
-    )
-
-
 def _build_chunk_preview(chunks) -> str:
     lines = []
     for idx, chunk_info in enumerate(chunks, start=1):
@@ -1332,86 +1606,64 @@ def _build_chunk_preview(chunks) -> str:
             f"[{idx}] words={chunk_info.word_count} est={chunk_info.estimated_duration:.1f}s "
             f"reason={chunk_info.reason}{warn}"
         )
+        chunk_text = render_clean_text_from_segments(chunk_info.segments).strip()
+        if chunk_text:
+            lines.append(f"text: {chunk_text}")
     return "\n".join(lines)
 
 
-def _append_chunk_warning_logs(chunks, log_text: str | None, verbose_logs: bool) -> str | None:
-    for chunk_info in chunks:
-        for warning in chunk_info.warnings:
-            if warning == "newline_boundary_skipped_min_words":
-                log_text = append_ui_log(
-                    "newline_boundary_skipped_min_words",
-                    log_text,
-                    verbose=True,
-                    enabled=verbose_logs,
-                )
-            elif warning.startswith("fallback_split_used:"):
-                log_text = append_ui_log(
-                    warning,
-                    log_text,
-                    verbose=True,
-                    enabled=verbose_logs,
-                )
-            elif warning == "hard_split_no_punct":
-                log_text = append_ui_log(
-                    "hard_split_no_punct",
-                    log_text,
-                    verbose=True,
-                    enabled=verbose_logs,
-                )
-    return log_text
+def _single_chunk(text: str, *, reason: str) -> ChunkInfo | None:
+    clean = render_clean_text(text).strip()
+    if not clean:
+        return None
+    sentence_count = len(re.findall(r"[.!?]", clean))
+    return ChunkInfo(
+        segments=[SpeechSegment("text", clean)],
+        sentence_count=sentence_count,
+        char_count=len(clean),
+        word_count=count_words(clean),
+        comma_count=clean.count(","),
+        estimated_duration=estimate_duration(clean),
+        reason=reason,
+        boundary_kind=reason,
+        pivot=False,
+        ends_with_suspended=clean.rstrip().endswith((",", ";", ":")),
+        oversize_sentence=False,
+        warnings=[],
+    )
 
 
-def handle_apply_prechunk(
-    text: str,
-    adjusted_text: str,
-    auto_adjust: bool,
-    min_words_per_chunk: int,
-    max_words_without_terminator: int,
-    max_est_seconds_per_chunk: float,
-    disable_newline_chunking: bool,
-    chunk_state: dict | None,
+def _apply_direction_chunking(
+    *,
+    direction_enabled: bool,
+    direction_source: str | None,
+    direction_snapshot_text: str | None,
+    tts_ready_text: str,
     log_text: str | None,
-    verbose_logs: bool,
-):
-    if not text or not text.strip():
-        return "", "Etat: non appliqué", {"applied": False, "chunks": [], "signature": None}, log_text
-    if auto_adjust:
-        adjusted_text, changes = prepare_adjusted_text(text or "", LEXIQUE_PATH)
-        log_text = summarize_adjustment_changes(changes, log_text, verbose_logs)
-    else:
-        adjusted_text = adjusted_text or text or ""
-    normalized_text = normalize_text(adjusted_text or "")
-    chunks = chunk_script(
-        normalized_text,
-        min_words_per_chunk=int(min_words_per_chunk),
-        max_words_without_terminator=int(max_words_without_terminator),
-        max_est_seconds_per_chunk=float(max_est_seconds_per_chunk),
-        split_on_newline=not disable_newline_chunking,
-    )
-    if not chunks:
-        log_text = append_ui_log("Aucun chunk généré.", log_text)
-        return "", "Etat: non appliqué", {"applied": False, "chunks": [], "signature": None}, log_text
-    preview = _build_chunk_preview(chunks)
-    log_text = _append_chunk_warning_logs(chunks, log_text, verbose_logs)
-    signature = _chunk_signature(
-        normalized_text,
-        min_words_per_chunk,
-        max_words_without_terminator,
-        max_est_seconds_per_chunk,
-        disable_newline_chunking,
-    )
-    state = {"applied": True, "chunks": chunks, "signature": signature}
-    log_text = append_ui_log("Pré-chunking appliqué.", log_text)
-    return preview, "Etat: appliqué", state, log_text
-
-
-def mark_chunk_dirty(chunk_state: dict | None):
-    state = dict(chunk_state or {"chunks": [], "signature": None})
-    state["applied"] = False
-    state["signature"] = None
-    state["chunks"] = []
-    return state, "Etat: non appliqué"
+) -> tuple[list[ChunkInfo], str, dict | None, str | None]:
+    direction_source = str(direction_source or "final")
+    snapshot = direction_snapshot_text or ""
+    if not direction_enabled:
+        single = _single_chunk(tts_ready_text, reason="single")
+        chunks = [single] if single else []
+        return chunks, "single", None, log_text
+    chunks, marker_count = parse_manual_chunks(snapshot, marker=MANUAL_CHUNK_MARKER)
+    if marker_count > 0 and chunks:
+        direction_meta = {
+            "source": direction_source,
+            "markers_count": marker_count,
+        }
+        return chunks, "manual_marker", direction_meta, log_text
+    log_text = append_ui_log("No markers → single chunk", log_text)
+    if not snapshot.strip():
+        snapshot = tts_ready_text
+    single = _single_chunk(snapshot, reason="manual_single")
+    chunks = [single] if single else []
+    direction_meta = {
+        "source": direction_source,
+        "markers_count": 0,
+    }
+    return chunks, "manual_single", direction_meta, log_text
 
 
 def handle_generate(
@@ -1425,28 +1677,49 @@ def handle_generate(
     include_model_name: bool,
     tts_engine: str,
     tts_language: str | None,
-    comma_pause_ms: int,
-    period_pause_ms: int,
-    semicolon_pause_ms: int,
-    colon_pause_ms: int,
-    dash_pause_ms: int,
-    newline_pause_ms: int,
-    min_words_per_chunk: int,
-    max_words_without_terminator: int,
-    max_est_seconds_per_chunk: float,
-    disable_newline_chunking: bool,
+    inter_chunk_gap_ms: float,
     verbose_logs: bool,
-    fade_ms: int,
-    zero_cross_radius_ms: int,
-    silence_threshold: float,
-    silence_min_ms: int,
-    chunk_state: dict | None,
+    direction_enabled: bool,
+    direction_source: str | None,
+    direction_snapshot_text: str | None,
     log_text: str | None,
     *param_values,
 ):
+    session_state = {"dir": None, "json": None}
+
+    def _with_session(*values):
+        return (*values, session_state)
+
+    def _early_generate_error(message: str):
+        log = append_ui_log(message, log_text)
+        return (
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            log,
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            session_state,
+        )
+
+    if not isinstance(tts_engine, str):
+        return _early_generate_error("Sélection moteur invalide")
+    valid_engines = {backend.id for backend in list_backends()}
+    if tts_engine not in valid_engines:
+        return _early_generate_error("Sélection moteur invalide")
     if not text or not text.strip():
-        state = chunk_state or {"applied": False, "chunks": [], "signature": None}
-        return "", None, "", "", "Etat: non appliqué", state, append_log("Erreur: texte vide.", log_text)
+        return _with_session(
+            "",
+            None,
+            None,
+            "",
+            append_log("Erreur: texte vide.", log_text),
+            None,
+            "",
+            "",
+        )
 
     log_text = append_ui_log("Initialisation de la génération...", log_text)
     if tts_engine == "xtts":
@@ -1467,63 +1740,40 @@ def handle_generate(
     else:
         adjusted_text = adjusted_text or text or ""
 
-    text_used = adjusted_text
-    if auto_adjust:
-        assert text_used == adjusted_text
-
     param_values_map = dict(zip(all_param_keys(), param_values))
     engine_params = collect_engine_params(tts_engine, param_values_map)
     voice_id = engine_params.get("voice_id")
     tts_language = tts_language or "fr-FR"
     requested_language = tts_language
     chatterbox_mode = engine_params.get("chatterbox_mode", "fr_finetune")
-    normalized_text = normalize_text(text_used)
-    if normalized_text != text_used and verbose_logs:
-        before = len(re.findall(r"\bII\b", text_used))
+    normalized_text = normalize_text(adjusted_text)
+    if normalized_text != adjusted_text and verbose_logs:
+        before = len(re.findall(r"\bII\b", adjusted_text))
         after = len(re.findall(r"\bII\b", normalized_text))
         ii_fix = max(before - after, 0)
         detail = f"II->Il x{ii_fix}" if ii_fix else "whitespace/ponctuation"
         log_text = append_ui_log(f"Normalisation: {detail}", log_text, verbose=True, enabled=True)
 
     output_dir = ensure_output_dir(out_dir)
-    timestamp = dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    now = dt.datetime.now()
     engine_slug = get_engine_slug(tts_engine, {"chatterbox_mode": chatterbox_mode})
-    filename = make_output_filename(
-        text=normalized_text,
-        ref_name=ref_name,
-        user_filename=user_filename,
-        add_timestamp=bool(add_timestamp),
-        timestamp=timestamp,
-        include_engine_slug=bool(include_model_name),
-        engine_slug=engine_slug,
-    )
-    preview_path, user_path = prepare_output_paths(SAFE_PREVIEW_DIR, output_dir, filename)
+    session_slug = build_session_slug(normalized_text, user_filename)
     clean_preview = render_clean_text(normalized_text)
     if clean_preview:
         log_text = append_ui_log("Texte interprété prêt.", log_text)
 
-    estimate = estimate_duration_with_pauses(
-        normalized_text,
-        comma_pause_ms=int(comma_pause_ms),
-        period_pause_ms=int(period_pause_ms),
-        semicolon_pause_ms=int(semicolon_pause_ms),
-        colon_pause_ms=int(colon_pause_ms),
-        dash_pause_ms=int(dash_pause_ms),
-        newline_pause_ms=int(newline_pause_ms),
-    )
+    estimate = estimate_duration(normalized_text)
     if estimate >= 35:
         log_text = append_ui_log("⚠️ Texte long détecté.", log_text)
 
     backend = get_backend(tts_engine)
     if backend is None:
         log_text = append_ui_log(f"Backend introuvable: {tts_engine}", log_text)
-        state = chunk_state or {"applied": False, "chunks": [], "signature": None}
-        return adjusted_text, None, "", "", "Etat: non appliqué", state, log_text
+        return _with_session(adjusted_text, None, "", "", log_text, None, "", "")
     if not backend.is_available():
         reason = backend.unavailable_reason() or "Dépendances manquantes."
         log_text = append_ui_log(f"Backend indisponible: {tts_engine}. {reason}", log_text)
-        state = chunk_state or {"applied": False, "chunks": [], "signature": None}
-        return adjusted_text, None, "", "", "Etat: non appliqué", state, log_text
+        return _with_session(adjusted_text, None, "", "", log_text, None, "", "")
 
     supported = supported_languages_for(tts_engine, backend, chatterbox_mode)
     tts_language, did_fallback = coerce_language(
@@ -1557,13 +1807,21 @@ def handle_generate(
             audio_prompt = resolve_ref_path(ref_name)
         except FileNotFoundError:
             log_text = append_ui_log(f"Référence introuvable: {ref_name}", log_text)
-            return adjusted_text, None, "", "", "Etat: non appliqué", chunk_state, log_text
+            return _with_session(
+                adjusted_text,
+                None,
+                None,
+                "",
+                log_text,
+                None,
+                "",
+                "",
+            )
     elif ref_name and not backend.supports_ref_audio:
         log_text = append_ui_log("Référence ignorée (backend sans voice ref).", log_text)
     if backend.id == "xtts" and not audio_prompt:
         log_text = append_ui_log("XTTS nécessite une référence vocale.", log_text)
-        state = chunk_state or {"applied": False, "chunks": [], "signature": None}
-        return adjusted_text, None, "", "", "Etat: non appliqué", state, log_text
+        return _with_session(adjusted_text, None, "", "", log_text, None, "", "")
 
     warnings = backend.validate_config(
         {
@@ -1590,8 +1848,7 @@ def handle_generate(
                 "Aucune voix Piper installée. Installez une voix FR recommandée.",
                 log_text,
             )
-            state = chunk_state or {"applied": False, "chunks": [], "signature": None}
-            return adjusted_text, None, "", "", "Etat: non appliqué", state, log_text
+            return _with_session(adjusted_text, None, "", "", log_text, None, "", "")
     if backend.uses_internal_voices and voice_id:
         for voice in voices:
             if voice.id == voice_id and voice.lang_codes:
@@ -1612,44 +1869,32 @@ def handle_generate(
     log_text = append_ui_log(f"voice_mode={tts_model_mode}", log_text, verbose=False, enabled=True)
     log_text = append_ui_log(f"cfg_weight={effective_cfg}", log_text, verbose=False, enabled=True)
 
-    chunk_preview_text = ""
-    signature = _chunk_signature(
-        normalized_text,
-        min_words_per_chunk,
-        max_words_without_terminator,
-        max_est_seconds_per_chunk,
-        disable_newline_chunking,
+    chunks, chunk_mode, direction_meta, log_text = _apply_direction_chunking(
+        direction_enabled=bool(direction_enabled),
+        direction_source=direction_source,
+        direction_snapshot_text=direction_snapshot_text,
+        tts_ready_text=normalized_text,
+        log_text=log_text,
     )
-    applied = bool(chunk_state and chunk_state.get("applied"))
-    same_signature = bool(chunk_state and chunk_state.get("signature") == signature)
-    if not applied or not same_signature:
-        log_text = append_ui_log("auto_apply_before_generate", log_text)
-        chunks = chunk_script(
-            normalized_text,
-            min_words_per_chunk=int(min_words_per_chunk),
-            max_words_without_terminator=int(max_words_without_terminator),
-            max_est_seconds_per_chunk=float(max_est_seconds_per_chunk),
-            split_on_newline=not disable_newline_chunking,
-        )
-        chunk_preview_text = _build_chunk_preview(chunks)
-        log_text = _append_chunk_warning_logs(chunks, log_text, verbose_logs)
-        chunk_state = {"applied": True, "chunks": chunks, "signature": signature}
-        chunk_status = "Etat: appliqué"
-    else:
-        chunks = chunk_state.get("chunks", [])
-        chunk_preview_text = _build_chunk_preview(chunks)
-        chunk_status = "Etat: appliqué"
+    chunk_preview_text = _build_chunk_preview(chunks)
+    if chunks:
+        for chunk_info in chunks:
+            if chunk_info.estimated_duration > DEFAULT_MAX_EST_SECONDS_PER_CHUNK:
+                log_text = append_ui_log(
+                    f"⚠️ Chunk long détecté: {chunk_info.estimated_duration:.1f}s (max_est={DEFAULT_MAX_EST_SECONDS_PER_CHUNK}s)",
+                    log_text,
+                )
 
     if not chunks:
-        state = {"applied": False, "chunks": [], "signature": None}
-        return (
+        return _with_session(
             adjusted_text,
             None,
             "",
             chunk_preview_text,
-            "Etat: non appliqué",
-            state,
             append_ui_log("Aucun chunk généré.", log_text),
+            None,
+            "",
+            "",
         )
 
     job_state = _get_job_state()
@@ -1664,42 +1909,16 @@ def handle_generate(
         "tts_backend": backend.id,
         "script": normalized_text,
         "chunks": _serialize_chunks(chunks),
-        "pause_plan": build_pause_plan(
-            chunks,
-            {
-                "comma_pause_ms": int(comma_pause_ms),
-                "period_pause_ms": int(period_pause_ms),
-                "semicolon_pause_ms": int(semicolon_pause_ms),
-                "colon_pause_ms": int(colon_pause_ms),
-                "dash_pause_ms": int(dash_pause_ms),
-                "newline_pause_ms": int(newline_pause_ms),
-            },
-        ),
         "voice_ref_path": audio_prompt,
         "out_path": str(tmp_path),
         "lang": str(backend_language or tts_language or "fr-FR"),
         "engine_params": {},
-        "chunk_settings": {
-            "min_words_per_chunk": int(min_words_per_chunk),
-            "max_words_without_terminator": int(max_words_without_terminator),
-            "max_est_seconds_per_chunk": float(max_est_seconds_per_chunk),
-        },
-        "pause_settings": {
-            "comma_pause_ms": int(comma_pause_ms),
-            "period_pause_ms": int(period_pause_ms),
-            "semicolon_pause_ms": int(semicolon_pause_ms),
-            "colon_pause_ms": int(colon_pause_ms),
-            "dash_pause_ms": int(dash_pause_ms),
-            "newline_pause_ms": int(newline_pause_ms),
-        },
-        "post_settings": {
-            "zero_cross_radius_ms": int(zero_cross_radius_ms),
-            "fade_ms": int(fade_ms),
-            "silence_threshold": float(silence_threshold),
-            "silence_min_ms": int(silence_min_ms),
-        },
         "target_sr": 24000,
     }
+    effective_gap_ms = int(inter_chunk_gap_ms or 0)
+    if tts_engine != "chatterbox":
+        effective_gap_ms = 0
+    payload["inter_chunk_gap_ms"] = effective_gap_ms
     engine_params_payload = dict(engine_params)
     if tts_engine == "chatterbox":
         engine_params_payload.update(
@@ -1730,7 +1949,7 @@ def handle_generate(
     _set_job_state(
         current_proc=proc,
         current_tmp_path=str(tmp_path),
-        current_final_path=str(preview_path),
+        current_final_path=None,
         job_running=True,
     )
 
@@ -1757,10 +1976,31 @@ def handle_generate(
             log_text = append_ui_log(f"Erreur TTS: {result.get('error')}", log_text)
         else:
             log_text = append_ui_log("Annulé.", log_text)
-        return adjusted_text, None, "", chunk_preview_text, chunk_status, chunk_state, log_text
+        return _with_session(
+            adjusted_text,
+            None,
+            "",
+            chunk_preview_text,
+            log_text,
+            None,
+            "",
+            "",
+        )
 
     meta = result.get("meta", {})
     backend_meta = meta.get("backend_meta") or {}
+    gap_ms = meta.get("inter_chunk_gap_ms")
+    if gap_ms is not None:
+        applied = 1 if meta.get("inter_chunk_gap_applied") else 0
+        gap_engine = meta.get("inter_chunk_gap_engine")
+        gap_chunks = meta.get("inter_chunk_gap_chunks")
+        log_text = append_ui_log(
+            f"Montage inter-chunk: inter_chunk_gap_ms={gap_ms} applied={applied} "
+            f"engine={gap_engine} chunks={gap_chunks}",
+            log_text,
+        )
+        if gap_chunks == 1 and int(gap_ms) > 0:
+            log_text = append_ui_log("single chunk → no gap applied", log_text)
     if meta.get("piper_voice"):
         log_text = append_ui_log(f"piper_voice={meta.get('piper_voice')}", log_text)
     if meta.get("piper_model_path"):
@@ -1775,6 +2015,9 @@ def handle_generate(
                 "XTTS forced to CPU on macOS due to torchaudio complex dtype on MPS.",
                 log_text,
             )
+        if verbose_logs and backend_meta.get("xtts_segments"):
+            segments = " | ".join(backend_meta.get("xtts_segments") or [])
+            log_text = append_ui_log(f"xtts_segments={segments}", log_text, verbose=True, enabled=True)
         backend_logs = meta.get("backend_logs") or []
         if backend_logs:
             logs_text = "\n".join(backend_logs)
@@ -1785,88 +2028,29 @@ def handle_generate(
             log_text = append_ui_log(f"xtts_log_path={backend_meta.get('log_path')}", log_text)
     if verbose_logs and meta.get("backend_cmd"):
         log_text = append_ui_log(f"backend_cmd={meta.get('backend_cmd')}", log_text, verbose=True, enabled=True)
-    preview_path_obj = Path(preview_path)
-    try:
-        preview_path_obj.parent.mkdir(parents=True, exist_ok=True)
-        if tmp_path.exists():
-            os.replace(tmp_path, preview_path_obj)
-        else:
-            _reset_job_state()
-            log_text = append_ui_log("Annulé.", log_text)
-            return adjusted_text, None, "", chunk_preview_text, chunk_status, chunk_state, log_text
-    except Exception as exc:
-        _cleanup_tmp(str(tmp_path))
-        _reset_job_state()
-        log_text = append_ui_log(f"Erreur TTS: {exc}", log_text)
-        return adjusted_text, None, "", chunk_preview_text, chunk_status, chunk_state, log_text
 
     for idx, duration in enumerate(meta.get("durations", []), start=1):
         retry_flag = meta.get("retries", [])[idx - 1] if meta.get("retries") else False
         chunk_info = chunks[idx - 1] if idx - 1 < len(chunks) else None
         reason = chunk_info.reason if chunk_info else "n/a"
         est = chunk_info.estimated_duration if chunk_info else 0.0
-        boundary_pauses = meta.get("boundary_pauses", [])
-        boundary_kinds = meta.get("boundary_kinds", [])
-        punct_fixes = meta.get("punct_fixes", [])
-        pause_note = ""
-        if idx - 1 < len(boundary_pauses):
-            boundary_pause = boundary_pauses[idx - 1] if idx - 1 < len(boundary_pauses) else 0
-            boundary_kind = boundary_kinds[idx - 1] if idx - 1 < len(boundary_kinds) else "none"
-            pause_note = f" boundary={boundary_kind} boundary_pause={boundary_pause}ms"
-        fix_note = ""
-        if idx - 1 < len(punct_fixes) and punct_fixes[idx - 1]:
-            fix_note = f" punct_fix={punct_fixes[idx - 1]}"
         retry_note = " retry" if retry_flag else ""
         log_text = append_ui_log(
             f"Chunk {idx}/{meta.get('chunks', len(meta.get('durations', [])))} "
-            f"reason={reason} est={est:.1f}s measured={duration:.2f}s{retry_note}{pause_note}{fix_note}",
+            f"reason={reason} est={est:.1f}s measured={duration:.2f}s{retry_note}",
             log_text,
             verbose=True,
             enabled=verbose_logs,
         )
-    pause_events = meta.get("pause_events", [])
-    if verbose_logs and pause_events:
-        for chunk_idx, events in enumerate(pause_events, start=1):
-            for event in events:
-                symbol = event.get("symbol", "?")
-                duration_ms = event.get("duration_ms", 0)
-                log_text = append_ui_log(
-                    f"punct_pause_applied chunk={chunk_idx} symbol={symbol} duration_ms={duration_ms}",
-                    log_text,
-                    verbose=True,
-                    enabled=True,
-                )
     total_duration = meta.get("total_duration")
     if total_duration is not None:
         log_text = append_ui_log(f"Durée finale: {total_duration:.2f}s", log_text)
-    if meta.get("total_pause_ms") is not None:
-        log_text = append_ui_log(
-            f"pause_total_ms={meta.get('total_pause_ms')}",
-            log_text,
-            verbose=True,
-            enabled=verbose_logs,
-        )
     if meta.get("segments_count_total") is not None:
         log_text = append_ui_log(
             f"segments_count_total={meta.get('segments_count_total')}",
             log_text,
             verbose=True,
             enabled=verbose_logs,
-        )
-    if meta.get("join_count") is not None:
-        log_text = append_ui_log(
-            f"join_count={meta.get('join_count')}",
-            log_text,
-            verbose=True,
-            enabled=verbose_logs,
-        )
-    if verbose_logs and meta.get("punct_tokens"):
-        token_items = " ".join(f"{tok}:{ms}" for tok, ms in meta.get("punct_tokens", []))
-        log_text = append_ui_log(
-            f"punct_tokens={token_items}",
-            log_text,
-            verbose=True,
-            enabled=True,
         )
     if meta.get("sr"):
         log_text = append_ui_log(
@@ -1876,15 +2060,66 @@ def handle_generate(
             enabled=verbose_logs,
         )
 
-    user_path_obj = Path(user_path)
-    preview_path_obj = Path(preview_path)
-    if user_path_obj.resolve() != preview_path_obj.resolve():
-        try:
-            user_path_obj.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(preview_path_obj, user_path_obj)
-            log_text = append_ui_log(f"Copie dossier utilisateur: {user_path_obj}", log_text)
-        except Exception as exc:
-            log_text = append_ui_log(f"Copie échouée: {exc}", log_text)
+    raw_path: Path | None = None
+    try:
+        session_dir = create_session_dir(WORK_DIR, now, session_slug)
+        raw_path = get_take_path_global_raw(session_dir, "v1")
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        if tmp_path.exists():
+            os.replace(tmp_path, raw_path)
+        else:
+            _reset_job_state()
+            log_text = append_ui_log("Annulé.", log_text)
+            return _with_session(
+                adjusted_text,
+                None,
+                "",
+                chunk_preview_text,
+                log_text,
+                None,
+                "",
+                "",
+            )
+        if tts_engine == "xtts" and backend_meta.get("xtts_segments"):
+            segments = [str(seg) for seg in (backend_meta.get("xtts_segments") or [])]
+            if segments:
+                write_xtts_segments(
+                    session_dir,
+                    engine_slug=engine_slug,
+                    take_id=raw_path.name,
+                    segments=segments,
+                    created_at=now.isoformat(timespec="seconds"),
+                    segment_boundaries_samples=backend_meta.get("xtts_segment_boundaries_samples"),
+                    sample_rate=backend_meta.get("xtts_sample_rate"),
+                )
+        artifacts = {
+            "raw_global": str(Path("takes") / "global" / raw_path.name),
+        }
+        artifacts_list = [str(raw_path)]
+        session_payload = build_session_payload(
+            engine_id=tts_engine,
+            engine_slug=engine_slug,
+            ref_name=ref_name,
+            text=normalized_text,
+            editorial_text=text or "",
+            tts_ready_text=normalized_text,
+            prep_log_md="",
+            created_at=now,
+            chunks=chunks,
+            chunk_mode=chunk_mode,
+            direction_meta=direction_meta,
+            artifacts=artifacts,
+            artifacts_list=artifacts_list,
+            takes={"global": ["v1"], "processed": []},
+            active_take={"global": "v1"},
+            active_listen="raw",
+        )
+        session_path = write_session_json(session_dir, session_payload)
+        log_text = append_ui_log(f"Session créée: {session_path}", log_text, verbose=False, enabled=True)
+        session_state = {"dir": str(session_dir), "json": str(session_path)}
+    except Exception as exc:
+        log_text = append_ui_log(f"Session non écrite: {exc}", log_text)
+        _cleanup_tmp(str(tmp_path))
     _reset_job_state()
     persist_state(
         {
@@ -1893,30 +2128,23 @@ def handle_generate(
             "last_user_filename": user_filename or "",
             "last_add_timestamp": bool(add_timestamp),
             "last_include_model_name": bool(include_model_name),
-            "last_comma_pause_ms": int(comma_pause_ms),
-            "last_period_pause_ms": int(period_pause_ms),
-            "last_semicolon_pause_ms": int(semicolon_pause_ms),
-            "last_colon_pause_ms": int(colon_pause_ms),
-            "last_dash_pause_ms": int(dash_pause_ms),
-            "last_newline_pause_ms": int(newline_pause_ms),
-            "last_min_words_per_chunk": int(min_words_per_chunk),
-            "last_max_words_without_terminator": int(max_words_without_terminator),
-            "last_max_est_seconds_per_chunk": float(max_est_seconds_per_chunk),
-            "last_disable_newline_chunking": bool(disable_newline_chunking),
             "last_verbose_logs": bool(verbose_logs),
             "last_tts_engine": str(tts_engine),
+            "inter_chunk_gap_ms": int(inter_chunk_gap_ms or 0),
         }
     )
     persist_engine_state(tts_engine, language=tts_language, voice_id=voice_id, params=engine_params)
-    log_text = append_ui_log(f"Fichier pré-écoute: {preview_path_obj}", log_text)
-    return (
+    if raw_path:
+        log_text = append_ui_log(f"Fichier RAW: {raw_path}", log_text)
+    return _with_session(
         adjusted_text,
-        str(preview_path_obj),
-        str(user_path_obj),
+        str(raw_path) if raw_path else "",
+        str(raw_path) if raw_path else "",
         chunk_preview_text,
-        chunk_status,
-        chunk_state,
         log_text,
+        None,
+        "",
+        "",
     )
 
 
@@ -1932,6 +2160,24 @@ def handle_stop(log_text: str | None):
     else:
         log_text = append_ui_log("Aucune génération en cours.", log_text)
     return None, "", log_text
+
+
+def handle_session_texts(session_state: dict | None):
+    state = dict(session_state or {})
+    session_dir = state.get("dir")
+    if not session_dir:
+        return "", "", "", gr.update(visible=False)
+    try:
+        _session_path, session_data = load_session_json(session_dir)
+        editorial, tts_ready, prep_log = extract_session_texts(session_data)
+    except Exception:
+        return "", "", "", gr.update(visible=False)
+    return (
+        editorial,
+        tts_ready,
+        prep_log,
+        gr.update(visible=True),
+    )
 
 
 def _confirm_action(action: str, confirm_state: dict | None, log_text: str | None):
@@ -1993,23 +2239,10 @@ def handle_save_preset_confirm(
     user_filename: str | None,
     add_timestamp: bool,
     include_model_name: bool,
+    inter_chunk_gap_ms: float,
     tts_language: str | None,
     tts_engine: str,
-    comma_pause_ms: int,
-    period_pause_ms: int,
-    semicolon_pause_ms: int,
-    colon_pause_ms: int,
-    dash_pause_ms: int,
-    newline_pause_ms: int,
-    min_words_per_chunk: int,
-    max_words_without_terminator: int,
-    max_est_seconds_per_chunk: float,
-    disable_newline_chunking: bool,
     verbose_logs: bool,
-    fade_ms: int,
-    zero_cross_radius_ms: int,
-    silence_threshold: float,
-    silence_min_ms: int,
     confirm_state: dict | None,
     log_text: str | None,
     *param_values,
@@ -2041,23 +2274,10 @@ def handle_save_preset_confirm(
         user_filename,
         add_timestamp,
         include_model_name,
+        inter_chunk_gap_ms,
         tts_language,
         tts_engine,
-        comma_pause_ms,
-        period_pause_ms,
-        semicolon_pause_ms,
-        colon_pause_ms,
-        dash_pause_ms,
-        newline_pause_ms,
-        min_words_per_chunk,
-        max_words_without_terminator,
-        max_est_seconds_per_chunk,
-        disable_newline_chunking,
         verbose_logs,
-        fade_ms,
-        zero_cross_radius_ms,
-        silence_threshold,
-        silence_min_ms,
         log_text,
         *param_values,
     )
@@ -2132,6 +2352,9 @@ def handle_stop_confirm(
             save_update,
             delete_update,
             stop_update,
+            gr.update(),
+            gr.update(),
+            gr.update(),
         )
     audio, path, log_text = handle_stop(log_text)
     return (
@@ -2142,6 +2365,9 @@ def handle_stop_confirm(
         save_update,
         delete_update,
         stop_update,
+        gr.update(),
+        gr.update(),
+        gr.update(),
     )
 
 
@@ -2157,6 +2383,7 @@ def handle_cancel_confirm(log_text: str | None):
 
 
 def build_ui() -> gr.Blocks:
+    clean_work_dir(WORK_DIR)
     initial_refs = list_refs()
     state_data = load_state()
     ensure_default_presets()
@@ -2170,7 +2397,10 @@ def build_ui() -> gr.Blocks:
             return value
         return base_preset.get(key, fallback)
 
-    default_out_dir_value = state_data.get("last_out_dir") or str(DEFAULT_OUTPUT_DIR)
+    default_tts_engine = state_data.get("last_tts_engine") or _state_or_preset(
+        "tts_engine", "chatterbox"
+    )
+    default_out_dir_value = str(DEFAULT_OUTPUT_DIR)
     default_user_filename = state_data.get("last_user_filename", "")
     default_add_timestamp = _coerce_bool(state_data.get("last_add_timestamp"), True)
     default_include_model_name = _coerce_bool(
@@ -2179,33 +2409,26 @@ def build_ui() -> gr.Blocks:
         else base_preset.get("include_model_name"),
         False,
     )
-    default_comma_pause = int(_state_or_preset("comma_pause_ms", DEFAULT_COMMA_PAUSE_MS))
-    default_period_pause = int(_state_or_preset("period_pause_ms", DEFAULT_PERIOD_PAUSE_MS))
-    default_semicolon_pause = int(_state_or_preset("semicolon_pause_ms", DEFAULT_SEMICOLON_PAUSE_MS))
-    default_colon_pause = int(_state_or_preset("colon_pause_ms", DEFAULT_COLON_PAUSE_MS))
-    default_dash_pause = int(_state_or_preset("dash_pause_ms", DEFAULT_DASH_PAUSE_MS))
-    default_newline_pause = int(_state_or_preset("newline_pause_ms", DEFAULT_NEWLINE_PAUSE_MS))
-    default_min_words_per_chunk = int(
-        _state_or_preset("min_words_per_chunk", DEFAULT_MIN_WORDS_PER_CHUNK)
-    )
-    default_max_words_without_terminator = int(
-        _state_or_preset("max_words_without_terminator", DEFAULT_MAX_WORDS_WITHOUT_TERMINATOR)
-    )
-    default_max_est_seconds = float(
-        _state_or_preset("max_est_seconds_per_chunk", DEFAULT_MAX_EST_SECONDS_PER_CHUNK)
-    )
     default_auto_adjust = _coerce_bool(state_data.get("last_auto_adjust"), True)
     default_show_adjust_log = _coerce_bool(state_data.get("last_show_adjust_log"), False)
-    default_disable_newline_chunking = _coerce_bool(
-        state_data.get("last_disable_newline_chunking")
-        if "last_disable_newline_chunking" in state_data
-        else base_preset.get("disable_newline_chunking"),
-        False,
+    default_direction_enabled = _coerce_bool(
+        state_data.get("direction_enabled")
+        if "direction_enabled" in state_data
+        else base_preset.get("direction_enabled"),
+        True,
+    )
+    default_direction_source = str(
+        state_data.get("direction_source")
+        if "direction_source" in state_data
+        else base_preset.get("direction_source") or "final"
     )
     default_verbose_logs = _coerce_bool(state_data.get("last_verbose_logs"), False)
-    default_tts_engine = state_data.get("last_tts_engine") or _state_or_preset(
-        "tts_engine", "chatterbox"
-    )
+    default_inter_chunk_gap_ms = state_data.get("inter_chunk_gap_ms")
+    if default_inter_chunk_gap_ms is None:
+        default_inter_chunk_gap_ms = base_preset.get("inter_chunk_gap_ms", 120)
+    default_inter_chunk_gap_ms = int(default_inter_chunk_gap_ms)
+    if default_tts_engine != "chatterbox":
+        default_inter_chunk_gap_ms = 0
     default_backend_check = get_backend(default_tts_engine)
     if not default_backend_check or not default_backend_check.is_available():
         default_tts_engine = "chatterbox"
@@ -2245,22 +2468,13 @@ def build_ui() -> gr.Blocks:
         if len(voice_ids) == 0 and default_tts_engine == "piper":
             default_voice_label_text = "Voix : (aucune)"
             default_voice_label_visible = True
-    default_fade_ms = int(_state_or_preset("fade_ms", FADE_MS))
-    default_zero_cross_radius_ms = int(
-        _state_or_preset("zero_cross_radius_ms", ZERO_CROSS_RADIUS_MS)
-    )
-    default_silence_threshold = _coerce_float(
-        _state_or_preset("silence_threshold", SILENCE_THRESHOLD),
-        SILENCE_THRESHOLD,
-    )
-    default_silence_min_ms = int(_state_or_preset("silence_min_ms", SILENCE_MIN_MS))
     preset_choices = list_presets()
     default_preset = state_data.get("last_preset")
     if default_preset not in preset_choices:
         default_preset = "default"
 
     with gr.Blocks(
-        title="Chatterbox TTS FR",
+        title="Vocalie-TTS",
         css=(
                 ".gradio-container { font-family: -apple-system, \"SF Pro Text\", \"SF Pro Display\", "
                 "\"Helvetica Neue\", Helvetica, Arial, sans-serif; }"
@@ -2279,8 +2493,43 @@ def build_ui() -> gr.Blocks:
                 "  line-height: 1.05;"
                 "  font-weight: 650;"
                 "}"
-                ".section-title h2 { font-size: 1.15rem; }"
-                ".section-title h3 { font-size: 1.05rem; }"
+                ".section-title h2 { font-size: 1.35rem; }"
+                ".section-title h3 { font-size: 1.2rem; }"
+
+                "/* Accordion headers */"
+                ".gr-accordion > .label,"
+                ".gr-accordion > .label span,"
+                ".gr-accordion > .label .prose {"
+                "  font-size: 1.35rem;"
+                "  font-weight: 650;"
+                "}"
+                ".gr-accordion > .label {"
+                "  background: #3f4046;"
+                "  padding: 0.4rem 0.85rem;"
+                "  border-radius: 8px;"
+                "  margin: 0.35rem 0 0.35rem 0;"
+                "}"
+                ".gr-accordion > .label .prose {"
+                "  padding: 0 !important;"
+                "  margin: 0 !important;"
+                "}"
+                "/* Section titles (Markdown headers) */"
+                ".vocalie-section h1,"
+                ".vocalie-section h2,"
+                ".vocalie-section h3 {"
+                "  font-size: 1.65rem !important;"
+                "  font-weight: 800 !important;"
+                "  line-height: 1.05 !important;"
+                "  margin: 0.15rem 0 0.65rem 0 !important;"
+                "}"
+
+                "/* Accordions: bigger label */"
+                ".vocalie-accordion > .label,"
+                ".vocalie-accordion > .label span,"
+                ".vocalie-accordion > .label .prose {"
+                "  font-size: 1.35rem !important;"
+                "  font-weight: 700 !important;"
+                "}"
 
                 "/* Subsection titles and small info lines */"
                 ".subhead {"
@@ -2307,7 +2556,6 @@ def build_ui() -> gr.Blocks:
         ) as demo:
         set_verbosity(default_verbose_logs)
         gr.Markdown("""# 🎙️ Chatterbox TTS FR\nInterface locale pour générer des voix off expressives en français.""")
-
         with gr.Group():
             gr.Markdown("## Presets", elem_classes=["section-title"])
             with gr.Row():
@@ -2328,241 +2576,45 @@ def build_ui() -> gr.Blocks:
                 delete_preset_btn = gr.Button("Supprimer", variant="secondary", elem_classes=["accent-btn"])
                 cancel_confirm_btn = gr.Button("Annuler", size="sm")
 
-        with gr.Group():
-            gr.Markdown("## Références vocales", elem_classes=["section-title"])
-            with gr.Row():
-                ref_dropdown = gr.Dropdown(
+        with gr.Accordion("1. Préparation", open=True, elem_id="prep-accordion", elem_classes=["vocalie-accordion"]):
+            with gr.Group(elem_classes=["vocalie-section"]):
+                gr.Markdown("## Texte", elem_id="prep-text-title")
+                text_input = gr.Textbox(
                     label=None,
-                    choices=initial_refs,
-                    value=default_ref,
-                    interactive=True,
+                    lines=4,
+                    max_lines=20,
+                    placeholder="Collez votre script ici...",
                     show_label=False,
-                    visible=bool(default_backend and default_backend.supports_ref_audio),
                 )
-                refresh_btn = gr.Button("Refresh", size="sm")
-            ref_support_note = gr.Markdown(
-                backend_ref_note(default_backend),
-                elem_classes=["inline-info"],
-            )
-            with gr.Accordion("Importer des fichiers audio", open=False):
-                upload = gr.Files(
-                    label="Drag & drop",
-                    file_types=list(ALLOWED_EXTENSIONS),
-                    file_count="multiple",
-                )
-
-        with gr.Group():
-            gr.Markdown("## Texte", elem_classes=["section-title"])
-            text_input = gr.Textbox(
-                label=None,
-                lines=4,
-                max_lines=20,
-                placeholder="Collez votre script ici...",
-                show_label=False,
-            )
-            with gr.Row():
-                auto_adjust_toggle = gr.Checkbox(
-                    label="Auto-ajustement",
-                    value=default_auto_adjust,
-                )
-                show_adjust_log_toggle = gr.Checkbox(
-                    label="Afficher log",
-                    value=default_show_adjust_log,
-                )
-            adjusted_text_box = gr.Textbox(
-                label="Texte ajusté",
-                lines=3,
-                max_lines=16,
-                interactive=False,
-                placeholder="Le texte ajusté pour le TTS apparaîtra ici...",
-            )
-            adjust_log_box = gr.Markdown("", elem_classes=["inline-info"])
-            with gr.Row():
-                target_duration = gr.Number(label="Durée cible (s)", value=None, precision=1, show_label=False)
-                adjust_btn = gr.Button("Ajuster le texte")
-                apply_btn = gr.Button("Utiliser la suggestion")
-            adjusted_preview = gr.Textbox(
-                label="Suggestion texte",
-                lines=3,
-                max_lines=16,
-                interactive=False,
-                placeholder="Le texte ajusté apparaîtra ici...",
-            )
-            adjust_info = gr.Markdown("Durée estimée: --", elem_classes=["inline-info"])
-            gr.Markdown("### Modèle / Langue", elem_classes=["subhead"])
-            with gr.Row():
-                engine_dropdown = gr.Dropdown(
-                    label="Moteur",
-                    choices=backend_choices(),
-                    value=default_tts_engine,
-                )
-                param_specs = _param_spec_catalog()
-                param_widgets = {}
-                default_context = {
-                    "chatterbox_mode": default_chatterbox_mode,
-                    "supports_ref_audio": default_backend.supports_ref_audio if default_backend else False,
-                    "uses_internal_voices": default_backend.uses_internal_voices if default_backend else False,
-                    "voice_count": len(voices),
-                    "piper_supports_speed": bool(
-                        default_tts_engine == "piper"
-                        and default_voice_value
-                        and piper_voice_supports_length_scale(default_voice_value)
-                    ),
-                }
-                chatterbox_mode_spec = param_specs.get("chatterbox_mode")
-                chatterbox_mode_dropdown = create_param_widget(
-                    chatterbox_mode_spec,
-                    coerce_param_value(
-                        chatterbox_mode_spec,
-                        engine_params.get("chatterbox_mode", chatterbox_mode_spec.default),
-                    ),
-                    default_tts_engine == "chatterbox",
-                )
-                speed_spec = param_specs.get("speed")
-                speed_value = None
-                speed_visible = False
-                if speed_spec:
-                    speed_value = coerce_param_value(
-                        speed_spec, engine_params.get("speed", speed_spec.default)
+                with gr.Row():
+                    auto_adjust_toggle = gr.Checkbox(
+                        label="Auto-ajustement",
+                        value=default_auto_adjust,
                     )
-                    speed_visible = "speed" in engine_param_schema(default_tts_engine) and spec_visible(
-                        speed_spec, default_context
+                    show_adjust_log_toggle = gr.Checkbox(
+                        label="Afficher log",
+                        value=default_show_adjust_log,
                     )
-                language_dropdown = gr.Dropdown(
-                    label="Langue",
-                    choices=language_choices(default_supported_languages),
-                    value=default_tts_language,
-                    visible=show_lang_default,
-                    interactive=show_lang_default,
+                with gr.Row():
+                    target_duration = gr.Number(label="Durée cible (s)", value=None, precision=1, show_label=False)
+                    adjust_btn = gr.Button("Ajuster le texte")
+                    apply_btn = gr.Button("Utiliser la suggestion")
+                adjusted_preview = gr.Textbox(
+                    label="Suggestion texte",
+                    lines=3,
+                    max_lines=16,
+                    interactive=False,
+                    placeholder="Le texte ajusté apparaîtra ici...",
                 )
-            lang_locked_md = gr.Markdown(
-                default_lang_locked_text,
-                elem_classes=["inline-info"],
-                visible=not show_lang_default,
-            )
-            voice_label_md = gr.Markdown(
-                default_voice_label_text,
-                elem_classes=["inline-info"],
-                visible=default_voice_label_visible,
-            )
-            piper_voice_status_md = gr.Markdown(
-                piper_voice_status_text(voices) if default_tts_engine == "piper" else "",
-                elem_classes=["inline-info"],
-                visible=default_tts_engine == "piper",
-            )
-            with gr.Row():
-                piper_refresh_button = gr.Button(
-                    "Refresh voix",
-                    visible=default_tts_engine == "piper",
+                adjusted_text_box = gr.Textbox(
+                    label="Texte ajusté",
+                    lines=3,
+                    max_lines=16,
+                    interactive=False,
+                    placeholder="Le texte ajusté pour le TTS apparaîtra ici...",
                 )
-                piper_install_voice_button = gr.Button(
-                    "Installer une voix FR recommandée",
-                    visible=default_tts_engine == "piper",
-                )
-            piper_catalog_md = gr.Markdown(
-                "Catalogue voix Piper : https://huggingface.co/rhasspy/piper-voices/tree/main",
-                elem_classes=["inline-info"],
-                visible=default_tts_engine == "piper",
-            )
-            default_supports_speed = bool(
-                default_tts_engine == "piper"
-                and default_voice_value
-                and piper_voice_supports_length_scale(default_voice_value)
-            )
-            piper_speed_note_md = gr.Markdown(
-                "Vitesse non supportée par cette voix",
-                elem_classes=["inline-info"],
-                visible=default_tts_engine == "piper" and bool(default_voice_value) and not default_supports_speed,
-            )
-            if speed_spec:
-                speed_widget = create_param_widget(speed_spec, speed_value, speed_visible)
-                param_widgets["speed"] = speed_widget
-            warnings_md = gr.Markdown("", elem_classes=["inline-info"], visible=False)
-            gr.Markdown("### Paramètres moteur", elem_classes=["subhead"])
-            param_keys = [key for key in all_param_keys() if key not in ("chatterbox_mode", "speed")]
-            for key in param_keys:
-                spec = param_specs.get(key)
-                if spec is None:
-                    continue
-                if key in engine_params:
-                    value = coerce_param_value(spec, engine_params.get(key, spec.default))
-                else:
-                    value = coerce_param_value(spec, spec.default)
-                visible = key in engine_param_schema(default_tts_engine) and spec_visible(
-                    spec, default_context
-                )
-                param_widgets[key] = create_param_widget(spec, value, visible)
-            param_widgets["chatterbox_mode"] = chatterbox_mode_dropdown
-            engine_status_md = gr.Markdown(
-                engine_status_markdown(default_tts_engine),
-                elem_classes=["inline-info"],
-            )
-            install_backend_btn = gr.Button(
-                "Installer",
-                variant="primary",
-                visible=not backend_status(default_tts_engine).get("installed"),
-            )
-            uninstall_backend_btn = gr.Button(
-                "Désinstaller",
-                variant="secondary",
-                visible=backend_status(default_tts_engine).get("installed")
-                and default_tts_engine != "chatterbox",
-            )
-            install_logs_box = gr.Textbox(
-                label="Logs installation",
-                lines=4,
-                max_lines=16,
-                interactive=False,
-            )
-            gr.Markdown("### Pauses automatiques (ponctuation)", elem_classes=["subhead"])
-            with gr.Row():
-                comma_pause_slider = gr.Slider(
-                    0,
-                    1000,
-                    value=default_comma_pause,
-                    step=50,
-                    label="Pause après virgule (ms)",
-                    info="300ms = 0,3s",
-                )
-                period_pause_slider = gr.Slider(
-                    0,
-                    2000,
-                    value=default_period_pause,
-                    step=50,
-                    label="Pause après point (ms)",
-                    info="500ms = 0,5s",
-                )
-                semicolon_pause_slider = gr.Slider(
-                    0,
-                    2000,
-                    value=default_semicolon_pause,
-                    step=50,
-                    label="Pause après point-virgule (ms)",
-                )
-            with gr.Row():
-                colon_pause_slider = gr.Slider(
-                    0,
-                    2000,
-                    value=default_colon_pause,
-                    step=50,
-                    label="Pause après deux-points (ms)",
-                )
-                dash_pause_slider = gr.Slider(
-                    0,
-                    1500,
-                    value=default_dash_pause,
-                    step=50,
-                    label="Pause après tiret (ms)",
-                )
-                newline_pause_slider = gr.Slider(
-                    0,
-                    4000,
-                    value=default_newline_pause,
-                    step=100,
-                    label="Pause après retour ligne (ms)",
-                    info="1000ms = 1s",
-                )
-            duration_preview = gr.Markdown("Durée estimée (avec pauses): --", elem_classes=["inline-info"])
+                adjust_info = gr.Markdown("Durée estimée: --", elem_classes=["inline-info"])
+                adjust_log_box = gr.Markdown("", elem_classes=["inline-info"])
             with gr.Accordion("Voir le texte final", open=False):
                 clean_text_box = gr.Textbox(
                     label="Texte interprété (envoyé au TTS)",
@@ -2574,123 +2626,315 @@ def build_ui() -> gr.Blocks:
                 gr.Markdown(
                     "⚠️ La ponctuation finale peut être renforcée à la synthèse, sans modifier cet aperçu."
                 )
-            with gr.Accordion("Pré-chunking", open=False):
+            with gr.Accordion("Direction de lecture", open=False):
+                direction_enabled_toggle = gr.Checkbox(
+                    label="Découpage manuel (recommandé)",
+                    value=default_direction_enabled,
+                )
+                gr.Markdown(
+                    "Insérez `[[CHUNK]]` pour définir les limites envoyées au TTS.",
+                    elem_classes=["inline-info"],
+                )
                 with gr.Row():
-                    min_words_slider = gr.Slider(
-                        1,
-                        20,
-                        value=default_min_words_per_chunk,
-                        step=1,
-                        label="Mots minimum par chunk",
-                        info="Augmenter améliore la stabilité prosodique, réduit les coupures.",
+                    direction_source_dropdown = gr.Dropdown(
+                        label="Source snapshot",
+                        choices=[
+                            ("original", "original"),
+                            ("adjusted", "adjusted"),
+                            ("final", "final"),
+                        ],
+                        value=default_direction_source,
                     )
-                    max_words_without_term_slider = gr.Slider(
-                        6,
-                        80,
-                        value=default_max_words_without_terminator,
-                        step=1,
-                        label="Max mots sans terminator",
-                        info="Seuil de fallback quand aucune fin de phrase n'est détectée.",
-                    )
-                    max_est_seconds_slider = gr.Slider(
-                        4.0,
-                        30.0,
-                        value=default_max_est_seconds,
-                        step=0.5,
-                        label="Durée max/chunk (s)",
-                        info="Garde-fou contre les dérives (10s recommandé).",
-                    )
-                    chunk_apply_btn = gr.Button("Appliquer", size="sm")
-                    reset_chunk_btn = gr.Button("↺", size="sm")
-                    verbose_logs_toggle = gr.Checkbox(
-                        label="Logs détaillés",
-                        value=default_verbose_logs,
-                    )
-                    disable_newline_chunking_toggle = gr.Checkbox(
-                        label="Désactiver découpe auto sur retour ligne",
-                        value=default_disable_newline_chunking,
-                    )
-                chunk_status = gr.Markdown("Etat: non appliqué")
+                    direction_load_btn = gr.Button("Charger snapshot", size="sm")
+                direction_snapshot_box = gr.Textbox(
+                    label="Snapshot (modifiable)",
+                    lines=6,
+                    max_lines=20,
+                    elem_id="direction_snapshot",
+                )
+                with gr.Row():
+                    insert_chunk_btn = gr.Button("Insérer CHUNK", size="sm", interactive=False)
+                    preview_chunks_btn = gr.Button("Voir chunks", size="sm", interactive=False)
                 chunk_preview_box = gr.Textbox(
                     label="Aperçu des chunks",
                     lines=4,
                     max_lines=16,
                     interactive=False,
-                    placeholder="Aperçu du pré-chunking.",
+                    placeholder="Aperçu des chunks manuels.",
                 )
-
-
-        with gr.Group():
-            gr.Markdown("## Traitement audio", elem_classes=["section-title"])
-            with gr.Row():
-                fade_slider = gr.Slider(
-                    0,
-                    200,
-                    value=default_fade_ms,
-                    step=1,
-                    label="Fade (ms)",
-                    info="Fondu doux sur les coupes.",
+            session_text_group = gr.Group(visible=False)
+            with session_text_group:
+                gr.Markdown("### 📝 Textes session (read-only)")
+                session_editorial_box = gr.Textbox(
+                    label="Texte éditorial",
+                    lines=3,
+                    max_lines=8,
+                    interactive=False,
                 )
-                zero_cross_slider = gr.Slider(
-                    0,
-                    50,
-                    value=default_zero_cross_radius_ms,
-                    step=1,
-                    label="Zero-cross radius (ms)",
+                session_tts_ready_box = gr.Textbox(
+                    label="Texte TTS-ready (envoyé au moteur)",
+                    lines=3,
+                    max_lines=8,
+                    interactive=False,
                 )
-            with gr.Row():
-                silence_threshold_slider = gr.Slider(
-                    0.0,
-                    0.1,
-                    value=default_silence_threshold,
-                    step=0.0005,
-                    label="Silence threshold",
-                    info="Amplitude max pour considérer un silence.",
+                session_prep_log_md = gr.Markdown("")
+        with gr.Accordion(
+            "2. Génération / Régénération",
+            open=True,
+            elem_id="generation-accordion",
+            elem_classes=["vocalie-accordion"],
+        ):
+            with gr.Group(elem_classes=["vocalie-section"]):
+                gr.Markdown("## Références vocales", elem_id="generation-refs-title")
+                with gr.Row():
+                    ref_dropdown = gr.Dropdown(
+                        label=None,
+                        choices=initial_refs,
+                        value=default_ref,
+                        interactive=True,
+                        show_label=False,
+                        visible=bool(default_backend and default_backend.supports_ref_audio),
+                    )
+                    refresh_btn = gr.Button("Refresh", size="sm")
+                ref_support_note = gr.Markdown(
+                    backend_ref_note(default_backend),
+                    elem_classes=["inline-info"],
                 )
-                silence_min_ms_slider = gr.Slider(
-                    0,
-                    500,
-                    value=default_silence_min_ms,
-                    step=5,
-                    label="Silence min (ms)",
-                    info="Durée min d'un silence pour appliquer le fade.",
+                with gr.Accordion("Importer des fichiers audio", open=False):
+                    upload = gr.Files(
+                        label="Drag & drop",
+                        file_types=list(ALLOWED_EXTENSIONS),
+                        file_count="multiple",
+                    )
+            with gr.Group():
+                gr.Markdown("### Modèle / Langue", elem_classes=["subhead"])
+                with gr.Row():
+                    engine_dropdown = gr.Dropdown(
+                        label="Moteur",
+                        choices=backend_choices(),
+                        value=default_tts_engine,
+                    )
+                    param_specs = _param_spec_catalog()
+                    param_widgets = {}
+                    default_context = {
+                        "chatterbox_mode": default_chatterbox_mode,
+                        "supports_ref_audio": default_backend.supports_ref_audio if default_backend else False,
+                        "uses_internal_voices": default_backend.uses_internal_voices if default_backend else False,
+                        "voice_count": len(voices),
+                        "piper_supports_speed": bool(
+                            default_tts_engine == "piper"
+                            and default_voice_value
+                            and piper_voice_supports_length_scale(default_voice_value)
+                        ),
+                    }
+                    chatterbox_mode_spec = param_specs.get("chatterbox_mode")
+                    chatterbox_mode_dropdown = create_param_widget(
+                        chatterbox_mode_spec,
+                        coerce_param_value(
+                            chatterbox_mode_spec,
+                            engine_params.get("chatterbox_mode", chatterbox_mode_spec.default),
+                        ),
+                        default_tts_engine == "chatterbox",
+                    )
+                    speed_spec = param_specs.get("speed")
+                    speed_value = None
+                    speed_visible = False
+                    if speed_spec:
+                        speed_value = coerce_param_value(
+                            speed_spec, engine_params.get("speed", speed_spec.default)
+                        )
+                        speed_visible = "speed" in engine_param_schema(default_tts_engine) and spec_visible(
+                            speed_spec, default_context
+                        )
+                    language_dropdown = gr.Dropdown(
+                        label="Langue",
+                        choices=language_choices(default_supported_languages),
+                        value=default_tts_language,
+                        visible=show_lang_default,
+                        interactive=show_lang_default,
+                    )
+                lang_locked_md = gr.Markdown(
+                    default_lang_locked_text,
+                    elem_classes=["inline-info"],
+                    visible=not show_lang_default,
                 )
-
-        with gr.Group():
-            gr.Markdown("## Sortie", elem_classes=["section-title"])
-            with gr.Row():
-                output_dir_box = gr.Textbox(
-                    label="Dossier de sortie",
-                    value=default_out_dir_value,
-                    lines=1,
+                voice_label_md = gr.Markdown(
+                    default_voice_label_text,
+                    elem_classes=["inline-info"],
+                    visible=default_voice_label_visible,
                 )
-                choose_btn = gr.Button("Choisir…", size="sm")
-            with gr.Row():
-                filename_box = gr.Textbox(
-                    label="Nom de fichier (optionnel)",
-                    value=default_user_filename,
-                    placeholder="Ex: spot_festival_voix_finale",
+                piper_voice_status_md = gr.Markdown(
+                    piper_voice_status_text(voices) if default_tts_engine == "piper" else "",
+                    elem_classes=["inline-info"],
+                    visible=default_tts_engine == "piper",
                 )
-                timestamp_toggle = gr.Checkbox(
-                    label="Ajouter timestamp",
-                    value=default_add_timestamp,
+                with gr.Row():
+                    piper_refresh_button = gr.Button(
+                        "Refresh voix",
+                        visible=default_tts_engine == "piper",
+                    )
+                    piper_install_voice_button = gr.Button(
+                        "Installer une voix FR recommandée",
+                        visible=default_tts_engine == "piper",
+                    )
+                piper_catalog_md = gr.Markdown(
+                    "Catalogue voix Piper : https://huggingface.co/rhasspy/piper-voices/tree/main",
+                    elem_classes=["inline-info"],
+                    visible=default_tts_engine == "piper",
                 )
-                include_model_toggle = gr.Checkbox(
-                    label="Inclure nom du modèle",
-                    value=default_include_model_name,
+                default_supports_speed = bool(
+                    default_tts_engine == "piper"
+                    and default_voice_value
+                    and piper_voice_supports_length_scale(default_voice_value)
                 )
-            with gr.Row():
-                generate_btn = gr.Button(
-                    "Générer",
+                piper_speed_note_md = gr.Markdown(
+                    "Vitesse non supportée par cette voix",
+                    elem_classes=["inline-info"],
+                    visible=default_tts_engine == "piper" and bool(default_voice_value) and not default_supports_speed,
+                )
+                if speed_spec:
+                    speed_widget = create_param_widget(speed_spec, speed_value, speed_visible)
+                    param_widgets["speed"] = speed_widget
+                warnings_md = gr.Markdown("", elem_classes=["inline-info"], visible=False)
+                xtts_segmentation_md = gr.Markdown(
+                    "Segmentation: XTTS native (recommandée)",
+                    elem_classes=["inline-info"],
+                    visible=default_tts_engine == "xtts",
+                )
+                gr.Markdown("### Paramètres moteur", elem_classes=["subhead"])
+                param_keys = [key for key in all_param_keys() if key not in ("chatterbox_mode", "speed")]
+                for key in param_keys:
+                    spec = param_specs.get(key)
+                    if spec is None:
+                        continue
+                    if key in engine_params:
+                        value = coerce_param_value(spec, engine_params.get(key, spec.default))
+                    else:
+                        value = coerce_param_value(spec, spec.default)
+                    visible = key in engine_param_schema(default_tts_engine) and spec_visible(
+                        spec, default_context
+                    )
+                    param_widgets[key] = create_param_widget(spec, value, visible)
+                param_widgets["chatterbox_mode"] = chatterbox_mode_dropdown
+                inter_chunk_gap_slider = gr.Slider(
+                    label="Blanc entre chunks (ms)",
+                    minimum=0,
+                    maximum=600,
+                    step=10,
+                    value=default_inter_chunk_gap_ms,
+                    visible=default_tts_engine == "chatterbox",
+                )
+                inter_chunk_gap_help = gr.Markdown(
+                    "Ajoute un silence au montage entre les chunks (respiration). "
+                    "N’affecte pas le texte ni la génération.",
+                    elem_classes=["inline-info"],
+                    visible=default_tts_engine == "chatterbox",
+                )
+                engine_status_md = gr.Markdown(
+                    engine_status_markdown(default_tts_engine),
+                    elem_classes=["inline-info"],
+                )
+                install_backend_btn = gr.Button(
+                    "Installer",
                     variant="primary",
-                    interactive=backend_status(default_tts_engine).get("installed", True),
+                    visible=not backend_status(default_tts_engine).get("installed"),
                 )
-                stop_btn = gr.Button("STOP", variant="secondary")
-            result_audio = gr.Audio(label="Pré-écoute", type="filepath", autoplay=False)
-            output_path_box = gr.Textbox(label="Fichier généré", interactive=False)
+                uninstall_backend_btn = gr.Button(
+                    "Désinstaller",
+                    variant="secondary",
+                    visible=backend_status(default_tts_engine).get("installed")
+                    and default_tts_engine != "chatterbox",
+                )
+            with gr.Group(elem_classes=["vocalie-section"]):
+                gr.Markdown("## Sortie", elem_id="generation-output-title")
+                with gr.Row():
+                    output_dir_box = gr.Textbox(
+                        label="Dossier de sortie",
+                        value=default_out_dir_value,
+                        lines=1,
+                    )
+                    choose_btn = gr.Button("Choisir…", size="sm")
+                with gr.Row():
+                    filename_box = gr.Textbox(
+                        label="Nom de fichier (optionnel)",
+                        value=default_user_filename,
+                        placeholder="Ex: spot_festival_voix_finale",
+                    )
+                    timestamp_toggle = gr.Checkbox(
+                        label="Ajouter timestamp",
+                        value=default_add_timestamp,
+                    )
+                    include_model_toggle = gr.Checkbox(
+                        label="Inclure nom du modèle",
+                        value=default_include_model_name,
+                    )
+                with gr.Row():
+                    generate_btn = gr.Button(
+                        "Générer",
+                        variant="primary",
+                        interactive=backend_status(default_tts_engine).get("installed", True),
+                    )
+                    stop_btn = gr.Button("STOP", variant="secondary")
+                output_path_box = gr.Textbox(label="Fichier généré", interactive=False)
+                open_output_btn = gr.Button("Ouvrir le dossier output", size="sm")
+                gr.Markdown("_Régénération par chunk arrive en RUN 9._", elem_classes=["inline-info"])
 
-        logs_box = gr.Textbox(label="Logs", lines=4, max_lines=16, interactive=False)
-        chunk_state = gr.State({"applied": False, "chunks": [], "signature": None})
+            raw_audio = gr.Audio(
+                label="RAW (référence)",
+                type="filepath",
+                autoplay=False,
+            )
+            gr.Markdown("RAW immuable (référence).", elem_classes=["inline-info"])
+            with gr.Row():
+                export_raw_btn = gr.Button("Exporter RAW", size="sm")
+                raw_export_path_box = gr.Textbox(label="RAW exporté", interactive=False)
+            with gr.Accordion("3. Édition audio", open=False):
+                edit_enabled_toggle = gr.Checkbox(
+                    label="Activer l’édition (minimal)",
+                    value=False,
+                )
+                edit_panel = gr.Column(visible=False)
+                with edit_panel:
+                    gr.Markdown("Édition minimale (trim + normalisation).")
+                    trim_silence_toggle = gr.Checkbox(
+                        label="Couper blancs début/fin",
+                        value=True,
+                    )
+                    normalize_toggle = gr.Checkbox(
+                        label="Normaliser",
+                        value=True,
+                    )
+                    target_dbfs_slider = gr.Slider(
+                        label="Niveau cible (dBFS)",
+                        minimum=-12.0,
+                        maximum=-0.1,
+                        value=DEFAULT_EDIT_TARGET_DBFS,
+                        step=0.1,
+                        interactive=False,
+                    )
+                    generate_edit_btn = gr.Button("Générer audio édité", size="sm", interactive=False)
+                    edited_audio = gr.Audio(
+                        label="Édité",
+                        type="filepath",
+                        autoplay=False,
+                    )
+                    edited_path_box = gr.Textbox(label="Fichier édité", interactive=False)
+            with gr.Accordion("🧾 Logs", open=False):
+                with gr.Row():
+                    verbose_logs_toggle = gr.Checkbox(
+                        label="Logs détaillés",
+                        value=default_verbose_logs,
+                    )
+                    copy_logs_btn = gr.Button("📋 Copier les logs", size="sm")
+                logs_box = gr.Textbox(label="Logs", lines=4, max_lines=16, interactive=False)
+                install_logs_box = gr.Textbox(
+                    label="Logs installation",
+                    lines=4,
+                    max_lines=16,
+                    interactive=False,
+                )
+
+        session_state = gr.State({"dir": None, "json": None})
         confirm_state = gr.State({"pending": None, "ts": 0.0})
 
         refresh_btn.click(refresh_dropdown, inputs=ref_dropdown, outputs=ref_dropdown)
@@ -2711,17 +2955,11 @@ def build_ui() -> gr.Blocks:
                 text_input,
                 auto_adjust_toggle,
                 show_adjust_log_toggle,
-                comma_pause_slider,
-                period_pause_slider,
-                semicolon_pause_slider,
-                colon_pause_slider,
-                dash_pause_slider,
-                newline_pause_slider,
             ],
             outputs=[
                 adjusted_text_box,
                 clean_text_box,
-                duration_preview,
+                adjust_info,
                 adjust_log_box,
             ],
         )
@@ -2731,17 +2969,11 @@ def build_ui() -> gr.Blocks:
                 text_input,
                 auto_adjust_toggle,
                 show_adjust_log_toggle,
-                comma_pause_slider,
-                period_pause_slider,
-                semicolon_pause_slider,
-                colon_pause_slider,
-                dash_pause_slider,
-                newline_pause_slider,
             ],
             outputs=[
                 adjusted_text_box,
                 clean_text_box,
-                duration_preview,
+                adjust_info,
                 adjust_log_box,
             ],
         )
@@ -2751,97 +2983,118 @@ def build_ui() -> gr.Blocks:
                 text_input,
                 auto_adjust_toggle,
                 show_adjust_log_toggle,
-                comma_pause_slider,
-                period_pause_slider,
-                semicolon_pause_slider,
-                colon_pause_slider,
-                dash_pause_slider,
-                newline_pause_slider,
             ],
             outputs=[
                 adjusted_text_box,
                 clean_text_box,
-                duration_preview,
+                adjust_info,
                 adjust_log_box,
             ],
         )
-        comma_pause_slider.change(
-            fn=update_estimated_duration,
+        direction_load_btn.click(
+            fn=handle_direction_load_snapshot,
             inputs=[
+                direction_source_dropdown,
+                text_input,
                 adjusted_text_box,
-                comma_pause_slider,
-                period_pause_slider,
-                semicolon_pause_slider,
-                colon_pause_slider,
-                dash_pause_slider,
-                newline_pause_slider,
+                clean_text_box,
+                logs_box,
             ],
-            outputs=duration_preview,
+            outputs=[direction_snapshot_box, logs_box],
         )
-        period_pause_slider.change(
-            fn=update_estimated_duration,
-            inputs=[
-                adjusted_text_box,
-                comma_pause_slider,
-                period_pause_slider,
-                semicolon_pause_slider,
-                colon_pause_slider,
-                dash_pause_slider,
-                newline_pause_slider,
-            ],
-            outputs=duration_preview,
+        direction_snapshot_box.change(
+            fn=update_direction_controls,
+            inputs=[direction_enabled_toggle, direction_snapshot_box],
+            outputs=[insert_chunk_btn, preview_chunks_btn],
         )
-        semicolon_pause_slider.change(
-            fn=update_estimated_duration,
-            inputs=[
-                adjusted_text_box,
-                comma_pause_slider,
-                period_pause_slider,
-                semicolon_pause_slider,
-                colon_pause_slider,
-                dash_pause_slider,
-                newline_pause_slider,
-            ],
-            outputs=duration_preview,
+        direction_enabled_toggle.change(
+            fn=update_direction_controls,
+            inputs=[direction_enabled_toggle, direction_snapshot_box],
+            outputs=[insert_chunk_btn, preview_chunks_btn],
         )
-        colon_pause_slider.change(
-            fn=update_estimated_duration,
+        preview_chunks_btn.click(
+            fn=handle_direction_preview,
             inputs=[
-                adjusted_text_box,
-                comma_pause_slider,
-                period_pause_slider,
-                semicolon_pause_slider,
-                colon_pause_slider,
-                dash_pause_slider,
-                newline_pause_slider,
+                direction_enabled_toggle,
+                direction_source_dropdown,
+                direction_snapshot_box,
+                clean_text_box,
+                logs_box,
             ],
-            outputs=duration_preview,
+            outputs=[chunk_preview_box, logs_box],
         )
-        dash_pause_slider.change(
-            fn=update_estimated_duration,
-            inputs=[
-                adjusted_text_box,
-                comma_pause_slider,
-                period_pause_slider,
-                semicolon_pause_slider,
-                colon_pause_slider,
-                dash_pause_slider,
-                newline_pause_slider,
-            ],
-            outputs=duration_preview,
+        insert_chunk_btn.click(
+            fn=append_chunk_marker,
+            inputs=[direction_snapshot_box],
+            outputs=[direction_snapshot_box],
+            js="""
+            (text) => {
+              const marker = "[[CHUNK]]";
+              const el = document.querySelector("#direction_snapshot textarea");
+              const current = text || "";
+              if (!el) {
+                return current + (current.endsWith("\\n") || !current ? "" : "\\n") + marker;
+              }
+              const start = el.selectionStart || 0;
+              const end = el.selectionEnd || 0;
+              const before = current.slice(0, start);
+              const after = current.slice(end);
+              const next = before + marker + after;
+              const pos = start + marker.length;
+              setTimeout(() => {
+                el.selectionStart = pos;
+                el.selectionEnd = pos;
+              }, 0);
+              return next;
+            }
+            """,
         )
-        newline_pause_slider.change(
-            fn=update_estimated_duration,
+        edit_enabled_toggle.change(
+            fn=update_edit_panel_state,
+            inputs=[edit_enabled_toggle, trim_silence_toggle, normalize_toggle],
+            outputs=[edit_panel, generate_edit_btn, target_dbfs_slider],
+        )
+        trim_silence_toggle.change(
+            fn=update_edit_panel_state,
+            inputs=[edit_enabled_toggle, trim_silence_toggle, normalize_toggle],
+            outputs=[edit_panel, generate_edit_btn, target_dbfs_slider],
+        )
+        normalize_toggle.change(
+            fn=update_edit_panel_state,
+            inputs=[edit_enabled_toggle, trim_silence_toggle, normalize_toggle],
+            outputs=[edit_panel, generate_edit_btn, target_dbfs_slider],
+        )
+        generate_edit_btn.click(
+            fn=handle_generate_edited_audio,
             inputs=[
-                adjusted_text_box,
-                comma_pause_slider,
-                period_pause_slider,
-                semicolon_pause_slider,
-                colon_pause_slider,
-                dash_pause_slider,
-                newline_pause_slider,
+                session_state,
+                output_dir_box,
+                filename_box,
+                timestamp_toggle,
+                include_model_toggle,
+                trim_silence_toggle,
+                normalize_toggle,
+                target_dbfs_slider,
+                logs_box,
             ],
-            outputs=duration_preview,
+            outputs=[edited_audio, edited_path_box, logs_box],
+        )
+        export_raw_btn.click(
+            fn=handle_export_raw_to_output,
+            inputs=[
+                session_state,
+                output_dir_box,
+                filename_box,
+                timestamp_toggle,
+                include_model_toggle,
+                logs_box,
+            ],
+            outputs=[raw_export_path_box, logs_box],
+        )
+        open_output_btn.click(
+            fn=handle_open_output_dir,
+            inputs=[output_dir_box, logs_box],
+            outputs=[logs_box],
         )
         param_widget_list = [param_widgets[key] for key in all_param_keys()]
         engine_dropdown.change(
@@ -2850,13 +3103,10 @@ def build_ui() -> gr.Blocks:
                 engine_dropdown,
                 language_dropdown,
                 chatterbox_mode_dropdown,
-                chunk_state,
             ],
             outputs=[
                 language_dropdown,
                 lang_locked_md,
-                chunk_state,
-                chunk_status,
                 ref_dropdown,
                 ref_support_note,
                 engine_status_md,
@@ -2870,6 +3120,9 @@ def build_ui() -> gr.Blocks:
                 piper_catalog_md,
                 piper_speed_note_md,
                 warnings_md,
+                xtts_segmentation_md,
+                inter_chunk_gap_slider,
+                inter_chunk_gap_help,
                 *param_widget_list,
             ],
         )
@@ -2879,14 +3132,11 @@ def build_ui() -> gr.Blocks:
                 engine_dropdown,
                 language_dropdown,
                 chatterbox_mode_dropdown,
-                chunk_state,
             ],
             outputs=[
                 language_dropdown,
                 lang_locked_md,
                 warnings_md,
-                chunk_state,
-                chunk_status,
                 *param_widget_list,
             ],
         )
@@ -2895,14 +3145,11 @@ def build_ui() -> gr.Blocks:
             inputs=[
                 chatterbox_mode_dropdown,
                 language_dropdown,
-                chunk_state,
             ],
             outputs=[
                 language_dropdown,
                 lang_locked_md,
                 warnings_md,
-                chunk_state,
-                chunk_status,
                 *param_widget_list,
             ],
         )
@@ -2949,7 +3196,6 @@ def build_ui() -> gr.Blocks:
                     param_widgets["voice_id"],
                     language_dropdown,
                     chatterbox_mode_dropdown,
-                    chunk_state,
                     *param_widget_list,
                 ],
                 outputs=[
@@ -2972,120 +3218,65 @@ def build_ui() -> gr.Blocks:
                 install_logs_box,
             ],
         )
-        text_input.change(
-            fn=mark_chunk_dirty,
-            inputs=[chunk_state],
-            outputs=[chunk_state, chunk_status],
-        )
-        auto_adjust_toggle.change(
-            fn=mark_chunk_dirty,
-            inputs=[chunk_state],
-            outputs=[chunk_state, chunk_status],
-        )
-        min_words_slider.change(
-            fn=mark_chunk_dirty,
-            inputs=[chunk_state],
-            outputs=[chunk_state, chunk_status],
-        )
-        max_words_without_term_slider.change(
-            fn=mark_chunk_dirty,
-            inputs=[chunk_state],
-            outputs=[chunk_state, chunk_status],
-        )
-        max_est_seconds_slider.change(
-            fn=mark_chunk_dirty,
-            inputs=[chunk_state],
-            outputs=[chunk_state, chunk_status],
-        )
-        disable_newline_chunking_toggle.change(
-            fn=mark_chunk_dirty,
-            inputs=[chunk_state],
-            outputs=[chunk_state, chunk_status],
-        )
-
         choose_btn.click(
             fn=handle_choose_output,
             inputs=[output_dir_box, logs_box],
             outputs=[output_dir_box, logs_box],
-        )
-        reset_chunk_btn.click(
-            fn=handle_reset_chunk_defaults,
-            inputs=[logs_box],
-            outputs=[
-                min_words_slider,
-                max_words_without_term_slider,
-                max_est_seconds_slider,
-                disable_newline_chunking_toggle,
-                logs_box,
-            ],
         )
         verbose_logs_toggle.change(
             fn=handle_toggle_verbose_logs,
             inputs=[verbose_logs_toggle, logs_box],
             outputs=[logs_box],
         )
-        chunk_apply_btn.click(
-            fn=handle_apply_prechunk,
-            inputs=[
-                text_input,
-                adjusted_text_box,
-                auto_adjust_toggle,
-                min_words_slider,
-                max_words_without_term_slider,
-                max_est_seconds_slider,
-                disable_newline_chunking_toggle,
-                chunk_state,
-                logs_box,
-                verbose_logs_toggle,
-            ],
-            outputs=[chunk_preview_box, chunk_status, chunk_state, logs_box],
+        copy_logs_btn.click(
+            fn=None,
+            inputs=[logs_box],
+            outputs=[],
+            js="""
+            (text) => {
+              if (navigator && navigator.clipboard) {
+                navigator.clipboard.writeText(text || "");
+              }
+              return [];
+            }
+            """,
         )
+        load_preset_outputs = [
+            ref_dropdown,
+            ref_support_note,
+            output_dir_box,
+            filename_box,
+            timestamp_toggle,
+            include_model_toggle,
+            engine_dropdown,
+            language_dropdown,
+            lang_locked_md,
+            engine_status_md,
+            install_backend_btn,
+            uninstall_backend_btn,
+            generate_btn,
+            voice_label_md,
+            piper_voice_status_md,
+            piper_refresh_button,
+            piper_install_voice_button,
+            piper_catalog_md,
+            piper_speed_note_md,
+            warnings_md,
+            xtts_segmentation_md,
+            inter_chunk_gap_slider,
+            inter_chunk_gap_help,
+            *param_widget_list,
+            verbose_logs_toggle,
+            preset_dropdown,
+            preset_name_box,
+            logs_box,
+        ]
+        global _LOAD_PRESET_OUTPUT_COUNT
+        _LOAD_PRESET_OUTPUT_COUNT = len(load_preset_outputs)
         load_preset_btn.click(
             fn=handle_load_preset,
             inputs=[preset_dropdown, logs_box],
-            outputs=[
-                ref_dropdown,
-                ref_support_note,
-                output_dir_box,
-                filename_box,
-                timestamp_toggle,
-                include_model_toggle,
-                engine_dropdown,
-                language_dropdown,
-                lang_locked_md,
-                engine_status_md,
-                install_backend_btn,
-                uninstall_backend_btn,
-                generate_btn,
-                voice_label_md,
-                piper_voice_status_md,
-                piper_refresh_button,
-                piper_install_voice_button,
-                piper_catalog_md,
-                piper_speed_note_md,
-                warnings_md,
-                *param_widget_list,
-                comma_pause_slider,
-                period_pause_slider,
-                semicolon_pause_slider,
-                colon_pause_slider,
-                dash_pause_slider,
-                newline_pause_slider,
-                min_words_slider,
-                max_words_without_term_slider,
-                max_est_seconds_slider,
-                disable_newline_chunking_toggle,
-                verbose_logs_toggle,
-                fade_slider,
-                zero_cross_slider,
-                silence_threshold_slider,
-                silence_min_ms_slider,
-                preset_dropdown,
-                preset_name_box,
-                chunk_status,
-                chunk_state,
-                logs_box,
-            ],
+            outputs=load_preset_outputs,
         )
         save_preset_btn.click(
             fn=handle_save_preset_confirm,
@@ -3096,23 +3287,10 @@ def build_ui() -> gr.Blocks:
                 filename_box,
                 timestamp_toggle,
                 include_model_toggle,
+                inter_chunk_gap_slider,
                 language_dropdown,
                 engine_dropdown,
-                comma_pause_slider,
-                period_pause_slider,
-                semicolon_pause_slider,
-                colon_pause_slider,
-                dash_pause_slider,
-                newline_pause_slider,
-                min_words_slider,
-                max_words_without_term_slider,
-                max_est_seconds_slider,
-                disable_newline_chunking_toggle,
                 verbose_logs_toggle,
-                fade_slider,
-                zero_cross_slider,
-                silence_threshold_slider,
-                silence_min_ms_slider,
                 confirm_state,
                 logs_box,
                 *param_widget_list,
@@ -3165,46 +3343,49 @@ def build_ui() -> gr.Blocks:
                 include_model_toggle,
                 engine_dropdown,
                 language_dropdown,
-                comma_pause_slider,
-                period_pause_slider,
-                semicolon_pause_slider,
-                colon_pause_slider,
-                dash_pause_slider,
-                newline_pause_slider,
-                min_words_slider,
-                max_words_without_term_slider,
-                max_est_seconds_slider,
-                disable_newline_chunking_toggle,
+                inter_chunk_gap_slider,
                 verbose_logs_toggle,
-                fade_slider,
-                zero_cross_slider,
-                silence_threshold_slider,
-                silence_min_ms_slider,
-                chunk_state,
+                direction_enabled_toggle,
+                direction_source_dropdown,
+                direction_snapshot_box,
                 logs_box,
                 *param_widget_list,
             ],
             outputs=[
                 adjusted_text_box,
-                result_audio,
+                raw_audio,
                 output_path_box,
                 chunk_preview_box,
-                chunk_status,
-                chunk_state,
                 logs_box,
+                edited_audio,
+                edited_path_box,
+                raw_export_path_box,
+                session_state,
+            ],
+        ).then(
+            fn=handle_session_texts,
+            inputs=[session_state],
+            outputs=[
+                session_editorial_box,
+                session_tts_ready_box,
+                session_prep_log_md,
+                session_text_group,
             ],
         )
         stop_btn.click(
             fn=handle_stop_confirm,
             inputs=[confirm_state, logs_box],
             outputs=[
-                result_audio,
+                raw_audio,
                 output_path_box,
                 logs_box,
                 confirm_state,
                 save_preset_btn,
                 delete_preset_btn,
                 stop_btn,
+                edited_audio,
+                edited_path_box,
+                raw_export_path_box,
             ],
         )
 
@@ -3214,7 +3395,9 @@ def build_ui() -> gr.Blocks:
 def main() -> None:
     demo = build_ui()
     port_env = os.environ.get("GRADIO_SERVER_PORT")
-    launch_kwargs = {}
+    launch_kwargs = {
+        "allowed_paths": [str(BASE_DIR), str(Path.home())],
+    }
     if port_env:
         try:
             launch_kwargs["server_port"] = int(port_env)

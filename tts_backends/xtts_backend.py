@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 from pathlib import Path
@@ -38,6 +39,22 @@ def xtts_model_available() -> bool:
         if path.exists():
             return True
     return False
+
+
+def _extract_xtts_segments(log_text: str) -> list[str] | None:
+    lines = [line.strip() for line in log_text.splitlines() if line.strip()]
+    for idx, line in enumerate(lines):
+        if "Text splitted to sentences" in line:
+            if idx + 1 < len(lines):
+                candidate = lines[idx + 1].strip()
+                try:
+                    parsed = ast.literal_eval(candidate)
+                except (ValueError, SyntaxError):
+                    return None
+                if isinstance(parsed, list):
+                    return [str(item) for item in parsed]
+            return None
+    return None
 
 
 def _ensure_wav_ref(path: str, tmp_dir: Path) -> str:
@@ -205,10 +222,20 @@ class XTTSBackend(TTSBackend):
             except json.JSONDecodeError:
                 meta = {}
         meta["log_path"] = str(log_path)
+        if isinstance(meta.get("segment_boundaries_samples"), list):
+            meta["xtts_segment_boundaries_samples"] = meta.get("segment_boundaries_samples")
+        if isinstance(meta.get("sr"), (int, float)):
+            meta["xtts_sample_rate"] = int(meta.get("sr"))
+        if isinstance(meta.get("segments"), list):
+            meta["xtts_segments"] = meta.get("segments")
         try:
             log_text = log_path.read_text(encoding="utf-8").strip()
         except OSError:
             log_text = ""
         if log_text:
             meta["stdout"] = log_text
+            segments = _extract_xtts_segments(log_text)
+            if segments:
+                meta.setdefault("xtts_segments", segments)
+                meta["segment_strategy"] = "xtts_native_sentence_split"
         return np.asarray(audio, dtype=np.float32), int(sr), meta

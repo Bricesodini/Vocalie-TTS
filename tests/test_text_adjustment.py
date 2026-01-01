@@ -51,15 +51,9 @@ def test_auto_sigles_ignore_long_tokens():
 
 def test_auto_adjustment_off_returns_raw():
     adjusted, _clean, _duration, log_md = app.handle_text_adjustment(
-        "C.N.C.",
-        False,
-        True,
-        200,
-        350,
-        300,
-        300,
-        250,
-        300,
+        text="C.N.C.",
+        auto_adjust=False,
+        show_adjust_log=True,
     )
     assert adjusted == "C.N.C."
     assert log_md == ""

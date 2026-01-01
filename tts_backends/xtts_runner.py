@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import platform
 import sys
+import numpy as np
 
 
 DEFAULT_MODEL_ID = "tts_models/multilingual/multi-dataset/xtts_v2"
@@ -60,6 +61,8 @@ def main() -> int:
         return 3
 
     language = _map_language(args.language)
+    segments = None
+    segment_lengths = []
     kwargs = {
         "text": args.text,
         "speaker_wav": args.speaker_wav,
@@ -86,6 +89,46 @@ def main() -> int:
     except Exception:
         sr = None
 
+    try:
+        synthesizer = getattr(tts, "synthesizer", None)
+        split_fn = None
+        if synthesizer is not None:
+            for name in ("split_sentences", "split_text"):
+                if hasattr(synthesizer, name):
+                    split_fn = getattr(synthesizer, name)
+                    break
+        if split_fn is not None:
+            try:
+                segments = split_fn(args.text, language=language)
+            except TypeError:
+                segments = split_fn(args.text)
+            if not isinstance(segments, list):
+                segments = None
+    except Exception:
+        segments = None
+
+    if segments:
+        for segment in segments:
+            seg_kwargs = {
+                "text": segment,
+                "speaker_wav": args.speaker_wav,
+                "language": language,
+            }
+            if args.speed is not None:
+                seg_kwargs["speed"] = float(args.speed)
+            try:
+                seg_kwargs["split_sentences"] = False
+                audio = tts.tts(**seg_kwargs)
+            except TypeError:
+                seg_kwargs.pop("split_sentences", None)
+                try:
+                    audio = tts.tts(**seg_kwargs)
+                except TypeError:
+                    seg_kwargs.pop("speed", None)
+                    audio = tts.tts(**seg_kwargs)
+            audio = np.asarray(audio)
+            segment_lengths.append(int(audio.shape[0]))
+
     if args.meta_json:
         meta = {
             "sr": sr,
@@ -93,6 +136,15 @@ def main() -> int:
             "forced_cpu": force_cpu,
             "model_id": args.model_id,
         }
+        if segments:
+            boundaries = []
+            cursor = 0
+            for length in segment_lengths[:-1]:
+                cursor += int(length)
+                boundaries.append(int(cursor))
+            meta["segments"] = segments
+            meta["segment_lengths_samples"] = segment_lengths
+            meta["segment_boundaries_samples"] = boundaries
         try:
             Path(args.meta_json).write_text(json.dumps(meta), encoding="utf-8")
         except Exception:

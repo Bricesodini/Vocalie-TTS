@@ -17,18 +17,10 @@ DEFAULT_MAX_PHRASES_PER_CHUNK = 3
 FINAL_MERGE_EST_SECONDS = 3.5
 
 LEGACY_TOKEN_PATTERN = re.compile(r"\{(?P<token>pause:\s*\d+|breath|beat)\}", re.IGNORECASE)
-MAX_PAUSE_MS = 4000
-DEFAULT_INTER_CHUNK_PAUSE_MS = 500
-DEFAULT_COMMA_PAUSE_MS = 250
-DEFAULT_PERIOD_PAUSE_MS = 400
-DEFAULT_SEMICOLON_PAUSE_MS = 300
-DEFAULT_COLON_PAUSE_MS = 300
-DEFAULT_DASH_PAUSE_MS = 250
-DEFAULT_NEWLINE_PAUSE_MS = 300
-DEFAULT_MAX_COMMA_SUBSEGMENTS = 8
 DEFAULT_MIN_WORDS_PER_CHUNK = 16
 DEFAULT_MAX_EST_SECONDS_PER_CHUNK = 10.0
 DEFAULT_MAX_WORDS_WITHOUT_TERMINATOR = 35
+MANUAL_CHUNK_MARKER = "[[CHUNK]]"
 PIVOT_WORDS = {"Cependant", "Pourtant", "Or", "Alors", "Néanmoins", "Toutefois"}
 TERMINATOR_CHARS = (".", "!", "?")
 FALLBACK_PUNCTUATION = (":", ";", "—", "-", ",")
@@ -77,17 +69,6 @@ def normalize_whitespace(text: str) -> str:
 
 def count_words(text: str) -> int:
     return len(re.findall(r"\w+", text))
-
-
-def stabilize_trailing_punct(text: str) -> tuple[str, str | None]:
-    stripped = text.rstrip()
-    if not stripped:
-        return text, None
-    if stripped.endswith(("...", "…")):
-        return text, None
-    if stripped.endswith((",", ";", ":")):
-        return f"{stripped[:-1]}.", f"trailing '{stripped[-1]}' -> '.'"
-    return text, None
 
 
 def _first_word(text: str) -> str:
@@ -241,12 +222,6 @@ class SpeechSegment:
 
 
 @dataclass
-class PauseEvent:
-    symbol: str
-    duration_ms: int
-
-
-@dataclass
 class TextUnit:
     text: str
     sentence_end: bool = False
@@ -323,21 +298,6 @@ def strip_legacy_tokens(text: str) -> str:
     return LEGACY_TOKEN_PATTERN.sub("", text)
 
 
-def get_trailing_silence_ms(segments: Iterable[SpeechSegment]) -> int:
-    total = 0
-    for segment in reversed(list(segments)):
-        if segment.kind != "silence":
-            break
-        total += segment.duration_ms
-    return total
-
-
-def compute_inter_chunk_pause_ms(trailing_ms: int, target_ms: int) -> int:
-    if trailing_ms >= target_ms:
-        return 0
-    return max(target_ms - max(trailing_ms, 0), 0)
-
-
 def _split_by_length(text: str, max_chars: int) -> List[str]:
     parts: List[str] = []
     text = text.strip()
@@ -364,169 +324,11 @@ def _is_dash_separator(text: str, idx: int) -> bool:
     return bool(before.isspace() and after.isspace())
 
 
-@dataclass
-class PunctUnit:
-    kind: str  # text, comma, period, semicolon, colon, dash, newline, paragraph
-    value: str
-
-
-def tokenize_punctuation(
-    text: str,
-    *,
-    sentence_endings: Sequence[str] = (".", "!", "?", "…"),
-) -> List[PunctUnit]:
-    cleaned = normalize_text(text)
-    if not cleaned:
-        return []
-    units: List[PunctUnit] = []
-    buffer: List[str] = []
-    i = 0
-    while i < len(cleaned):
-        ch = cleaned[i]
-        if ch == "\n" and cleaned[i : i + 2] == "\n\n":
-            if buffer:
-                units.append(PunctUnit("text", "".join(buffer)))
-                buffer = []
-            units.append(PunctUnit("paragraph", "\n\n"))
-            i += 2
-            continue
-        if ch == "\n":
-            if buffer:
-                units.append(PunctUnit("text", "".join(buffer)))
-                buffer = []
-            units.append(PunctUnit("newline", "\n"))
-            i += 1
-            continue
-        if ch == ",":
-            if buffer:
-                units.append(PunctUnit("text", "".join(buffer)))
-                buffer = []
-            units.append(PunctUnit("comma", ch))
-            i += 1
-            continue
-        if ch == ";":
-            if buffer:
-                units.append(PunctUnit("text", "".join(buffer)))
-                buffer = []
-            units.append(PunctUnit("semicolon", ch))
-            i += 1
-            continue
-        if ch == ":":
-            if buffer:
-                units.append(PunctUnit("text", "".join(buffer)))
-                buffer = []
-            units.append(PunctUnit("colon", ch))
-            i += 1
-            continue
-        if ch in ("—", "-") and _is_dash_separator(cleaned, i):
-            if buffer:
-                units.append(PunctUnit("text", "".join(buffer)))
-                buffer = []
-            units.append(PunctUnit("dash", ch))
-            i += 1
-            continue
-        if ch == "." and cleaned[i : i + 3] == "...":
-            if buffer:
-                units.append(PunctUnit("text", "".join(buffer)))
-                buffer = []
-            units.append(PunctUnit("period", "..."))
-            i += 3
-            continue
-        if ch in sentence_endings:
-            if buffer:
-                units.append(PunctUnit("text", "".join(buffer)))
-                buffer = []
-            units.append(PunctUnit("period", ch))
-            i += 1
-            continue
-        buffer.append(ch)
-        i += 1
-    if buffer:
-        units.append(PunctUnit("text", "".join(buffer)))
-    return units
-
-
-def ensure_strong_ending(
-    segments: List[SpeechSegment],
-    sentence_endings: Sequence[str] = (".", "!", "?", "…"),
-) -> None:
-    for segment in reversed(segments):
-        if segment.kind != "text":
-            continue
-        stripped = segment.content.rstrip()
-        if not stripped:
-            continue
-        if stripped[-1] not in sentence_endings:
-            segment.content = f"{segment.content.rstrip()}{sentence_endings[0]}"
-        break
 
 
 def render_clean_text_from_segments(segments: Iterable[SpeechSegment]) -> str:
     cleaned = "".join(seg.content for seg in segments if seg.kind == "text")
     return normalize_text(cleaned)
-
-
-def split_text_and_pauses(
-    text: str,
-    *,
-    comma_pause_ms: int = DEFAULT_COMMA_PAUSE_MS,
-    period_pause_ms: int = DEFAULT_PERIOD_PAUSE_MS,
-    semicolon_pause_ms: int = DEFAULT_SEMICOLON_PAUSE_MS,
-    colon_pause_ms: int = DEFAULT_COLON_PAUSE_MS,
-    dash_pause_ms: int = DEFAULT_DASH_PAUSE_MS,
-    newline_pause_ms: int = DEFAULT_NEWLINE_PAUSE_MS,
-    suppress_final_pause: bool = False,
-    return_events: bool = False,
-) -> List[SpeechSegment] | tuple[List[SpeechSegment], List[PauseEvent]]:
-    if not text:
-        return [] if not return_events else ([], [])
-    cleaned = normalize_text(text)
-    if not cleaned:
-        return [] if not return_events else ([], [])
-    pause_map = {
-        ",": int(comma_pause_ms),
-        ".": int(period_pause_ms),
-        "!": int(period_pause_ms),
-        "?": int(period_pause_ms),
-        ";": int(semicolon_pause_ms),
-        ":": int(colon_pause_ms),
-        "—": int(dash_pause_ms),
-        "-": int(dash_pause_ms),
-    }
-    segments: List[SpeechSegment] = []
-    events: List[PauseEvent] = []
-    start = 0
-    for idx, ch in enumerate(cleaned):
-        if ch == "\n":
-            if idx > start:
-                segments.append(SpeechSegment("text", cleaned[start:idx]))
-            pause_ms = max(int(newline_pause_ms), 0)
-            if pause_ms > 0:
-                segments.append(SpeechSegment("silence", "", pause_ms))
-                events.append(PauseEvent("\\n", pause_ms))
-            start = idx + 1
-            continue
-        if ch in pause_map:
-            if ch == "-" and not _is_dash_separator(cleaned, idx):
-                continue
-            if idx + 1 > start:
-                segments.append(SpeechSegment("text", cleaned[start : idx + 1]))
-            pause_ms = max(pause_map[ch], 0)
-            if pause_ms > 0:
-                segments.append(SpeechSegment("silence", "", pause_ms))
-                events.append(PauseEvent(ch, pause_ms))
-            start = idx + 1
-    if start < len(cleaned):
-        segments.append(SpeechSegment("text", cleaned[start:]))
-
-    if suppress_final_pause and segments and segments[-1].kind == "silence":
-        segments.pop()
-        if events:
-            events.pop()
-
-    if return_events:
-        return segments, events
-    return segments
 
 
 def _tokenize_for_chunking(text: str) -> List[str]:
@@ -751,6 +553,43 @@ def chunk_script(
     return chunks
 
 
+def parse_manual_chunks(
+    snapshot: str,
+    *,
+    marker: str = MANUAL_CHUNK_MARKER,
+) -> tuple[List[ChunkInfo], int]:
+    if not snapshot:
+        return [], 0
+    marker_count = snapshot.count(marker)
+    if marker_count == 0:
+        return [], 0
+    parts = snapshot.split(marker)
+    chunks: List[ChunkInfo] = []
+    for part in parts:
+        chunk_text = part.strip()
+        if not chunk_text:
+            continue
+        clean = render_clean_text(chunk_text)
+        sentence_count = len(re.findall(r"[.!?]", clean))
+        chunks.append(
+            ChunkInfo(
+                segments=[SpeechSegment("text", chunk_text)],
+                sentence_count=sentence_count,
+                char_count=len(chunk_text),
+                word_count=count_words(clean),
+                comma_count=clean.count(","),
+                estimated_duration=estimate_duration(clean),
+                reason="manual_marker",
+                boundary_kind="manual_marker",
+                pivot=False,
+                ends_with_suspended=clean.rstrip().endswith((",", ";", ":")),
+                oversize_sentence=False,
+                warnings=[],
+            )
+        )
+    return chunks, marker_count
+
+
 def stitch_segments(
     segments: Iterable[SpeechSegment],
     sr: int,
@@ -776,57 +615,6 @@ def render_clean_text(text: str) -> str:
     """Return the script without pause directives, lightly normalized."""
 
     return normalize_text(text or "")
-
-
-def estimate_duration_with_pauses(
-    text: str,
-    *,
-    comma_pause_ms: int = DEFAULT_COMMA_PAUSE_MS,
-    period_pause_ms: int = DEFAULT_PERIOD_PAUSE_MS,
-    semicolon_pause_ms: int = DEFAULT_SEMICOLON_PAUSE_MS,
-    colon_pause_ms: int = DEFAULT_COLON_PAUSE_MS,
-    dash_pause_ms: int = DEFAULT_DASH_PAUSE_MS,
-    newline_pause_ms: int = DEFAULT_NEWLINE_PAUSE_MS,
-    sentence_endings: Sequence[str] = (".", "!", "?", "…"),
-) -> float:
-    cleaned = normalize_text(text)
-    units = tokenize_punctuation(cleaned, sentence_endings=sentence_endings)
-    comma_count = sum(1 for unit in units if unit.kind == "comma")
-    period_count = sum(1 for unit in units if unit.kind == "period")
-    semicolon_count = sum(1 for unit in units if unit.kind == "semicolon")
-    colon_count = sum(1 for unit in units if unit.kind == "colon")
-    dash_count = sum(1 for unit in units if unit.kind == "dash")
-    newline_count = sum(1 for unit in units if unit.kind in ("newline", "paragraph"))
-    base = estimate_duration(cleaned)
-    pause_seconds = (
-        comma_count * max(comma_pause_ms, 0)
-        + period_count * max(period_pause_ms, 0)
-        + semicolon_count * max(semicolon_pause_ms, 0)
-        + colon_count * max(colon_pause_ms, 0)
-        + dash_count * max(dash_pause_ms, 0)
-        + newline_count * max(newline_pause_ms, 0)
-    ) / 1000.0
-    return base + pause_seconds
-
-
-def split_on_commas(text: str, max_subsegments: int = DEFAULT_MAX_COMMA_SUBSEGMENTS) -> List[str]:
-    cleaned = normalize_text(text)
-    if not cleaned:
-        return []
-    segments: List[str] = []
-    buffer: List[str] = []
-    comma_count = 0
-    for ch in cleaned:
-        buffer.append(ch)
-        if ch == ",":
-            comma_count += 1
-            segments.append("".join(buffer))
-            buffer = []
-    if buffer:
-        segments.append("".join(buffer))
-    if comma_count >= max_subsegments:
-        return [cleaned]
-    return segments
 
 
 def _split_text_by_punctuation(text: str, punct: str) -> List[str]:
@@ -1073,32 +861,19 @@ __all__ = [
     "AVERAGE_WPS",
     "DEFAULT_MAX_CHARS_PER_CHUNK",
     "DEFAULT_MAX_PHRASES_PER_CHUNK",
-    "DEFAULT_INTER_CHUNK_PAUSE_MS",
-    "DEFAULT_COMMA_PAUSE_MS",
-    "DEFAULT_PERIOD_PAUSE_MS",
-    "DEFAULT_SEMICOLON_PAUSE_MS",
-    "DEFAULT_COLON_PAUSE_MS",
-    "DEFAULT_DASH_PAUSE_MS",
-    "DEFAULT_NEWLINE_PAUSE_MS",
-    "DEFAULT_MAX_COMMA_SUBSEGMENTS",
     "DEFAULT_MIN_WORDS_PER_CHUNK",
     "DEFAULT_MAX_EST_SECONDS_PER_CHUNK",
     "DEFAULT_MAX_WORDS_WITHOUT_TERMINATOR",
     "FINAL_MERGE_EST_SECONDS",
     "DurationAdjustment",
     "SpeechSegment",
-    "PauseEvent",
     "ChunkInfo",
     "TextUnit",
-    "PunctUnit",
-    "MAX_PAUSE_MS",
     "adjust_text_to_duration",
     "chunk_script",
+    "MANUAL_CHUNK_MARKER",
+    "parse_manual_chunks",
     "estimate_duration",
-    "estimate_duration_with_pauses",
-    "ensure_strong_ending",
-    "compute_inter_chunk_pause_ms",
-    "get_trailing_silence_ms",
     "load_lexique_json",
     "normalize_paste_fr",
     "normalize_for_chatterbox",
@@ -1108,10 +883,6 @@ __all__ = [
     "normalize_text",
     "render_clean_text",
     "render_clean_text_from_segments",
-    "split_on_commas",
-    "split_text_and_pauses",
-    "stabilize_trailing_punct",
     "strip_legacy_tokens",
     "stitch_segments",
-    "tokenize_punctuation",
 ]
