@@ -1,8 +1,8 @@
-# 🎙️ Chatterbox TTS FR
+# 🎙️ Vocalie-TTS
 
 ## Présentation
 
-Chatterbox TTS FR est une interface locale pour produire des voix off en français avec un pipeline simple, stable et reproductible.
+Vocalie-TTS est une interface locale pour produire des voix off en français avec un pipeline simple, stable et reproductible.
 Le cœur du produit est la génération TTS ; l’édition audio avancée a été supprimée pour éviter les comportements implicites.
 
 Objectifs V2 :
@@ -20,12 +20,28 @@ Objectifs V2 :
 - montage inter‑chunk optionnel (silence) pour Chatterbox
 - édition minimale **optionnelle** : trim début/fin + normalisation
 
+## Principe fondamental (V2)
+
+Vocalie‑TTS V2 repose sur un principe simple : **aucun comportement implicite**.
+
+- Aucun découpage automatique caché
+- Aucun post‑traitement audio non demandé
+- Aucun paramètre envoyé à un moteur qui ne le supporte pas
+
+Tout ce qui influence le rendu audio est **visible, explicite et traçable** par l’utilisateur.
+
+- UI Gradio locale (macOS friendly)
+- moteurs : Chatterbox, XTTS v2, Piper, Bark
+- chunking **manuel** via marqueur `[[CHUNK]]` (mode Direction)
+- montage inter‑chunk optionnel (silence) pour Chatterbox
+- édition minimale **optionnelle** : trim début/fin + normalisation
+
 ## Moteurs supportés
 
 - **Chatterbox** (FR + multilangue)
 - **XTTS v2** (voice cloning, ref audio obligatoire)
 - **Piper** (offline rapide, voix à installer)
-- **Bark** (créatif, expérimental)
+- **Bark** (créatif, expérimental) - A venir
 
 L’UI est capability‑driven : seuls les paramètres supportés par le backend sont visibles et envoyés.
 Par exemple, les paramètres de référence vocale ou de segmentation ne sont affichés que pour les moteurs qui les supportent.
@@ -70,9 +86,7 @@ Le dossier `work/` est nettoyé au démarrage (sauf `VOCALIE_KEEP_WORK=1`).
 - Node.js >= 20
 - **ffmpeg** (recommandé, requis pour XTTS si la référence n’est pas en WAV)
 
-```bash
-brew install ffmpeg
-```
+Installez ffmpeg via votre gestionnaire système (ex: macOS `brew install ffmpeg`).
 
 ## Structure repo (résumé)
 
@@ -85,12 +99,14 @@ brew install ffmpeg
 2. Démarrer le frontend
 3. (Optionnel) Démarrer le cockpit Gradio
 
+Le cockpit Gradio est un **outil d’exploration et de contrôle**, il ne fait pas partie du chemin critique de production.
+
 ## Quickstart (API + Frontend)
 
 ### Backend (API) — installation minimale (runtime)
 
 ```bash
-cd Chatterbox
+cd Vocalie-TTS
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
@@ -103,10 +119,9 @@ uvicorn backend.app:app --reload --port 8000
 ### Quickstart (bootstrap)
 
 ```bash
-./scripts/bootstrap.sh min   # core + chatterbox
-./scripts/bootstrap.sh std   # min + xtts + piper
+./scripts/bootstrap.sh min   # core + chatterbox (smoke auto)
+./scripts/bootstrap.sh std   # min + xtts + piper (smoke auto)
 ./scripts/bootstrap.sh clean # supprime .venv et .venvs
-./scripts/smoke.sh
 ```
 
 ### Manual install (fallback)
@@ -139,19 +154,6 @@ python -c "from backend_install.installer import run_install; print(run_install(
 python -c "from backend_install.installer import run_install; print(run_install('piper'))"
 ```
 
-### Installer moteur Chatterbox isolé
-
-Chatterbox s’exécute dans un venv dédié (`.venvs/chatterbox`), séparé du core.
-
-```bash
-python3.11 -m venv .venvs/chatterbox
-source .venvs/chatterbox/bin/activate
-pip install -U pip setuptools wheel
-export PIP_NO_BUILD_ISOLATION=1
-pip install "numpy<1.26,>=1.24"
-pip install -r requirements-chatterbox.txt
-```
-
 ### Frontend (Next.js)
 
 ```bash
@@ -165,7 +167,7 @@ Ouvrez ensuite http://localhost:3000
 ## Quickstart (Gradio cockpit)
 
 ```bash
-cd Chatterbox
+cd Vocalie-TTS
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
@@ -191,7 +193,7 @@ Dev/tests : `requirements-dev.txt`
 ## Structure projet
 
 ```
-Chatterbox/
+Vocalie-TTS/
 ├── app.py            # UI Gradio (entrée principale)
 ├── refs.py           # gestion des Ref_audio/
 ├── text_tools.py     # outils texte + chunking manuel
@@ -242,6 +244,22 @@ uvicorn backend.app:app --reload --host 0.0.0.0 --port 8000
 
 macOS peut afficher un prompt firewall au premier lancement.
 
+## Schéma conceptuel (simplifié)
+
+```
+[ Frontend Next.js ]
+         |
+         v
+      [ API Core ]
+         |
+  -----------------
+  |       |       |
+[Chatter] [XTTS] [Piper]
+```
+
+Chaque moteur TTS s’exécute dans son **environnement Python isolé** et est invoqué par l’API core via subprocess.
+Cette séparation garantit la stabilité, la reproductibilité et l’indépendance des moteurs.
+
 ## Architecture des environnements
 
 - `.venv` (core) : API + cockpit Gradio + deps communes.
@@ -277,6 +295,7 @@ Le backend appelle les moteurs via le Python de `.venvs/*` :
 ## Troubleshooting
 
 - `400 engine_required` sur `/v1/tts/voices` : l’engine n’est pas envoyé. Vérifiez que l’UI passe `engine=<id>`.
+- Crash Gradio `api_info()` (TypeError bool iterable) : mismatch `gradio`/`gradio_client`. Gardez les versions alignées et laissez `show_api=False`.
 - XTTS sur macOS : le runner force le CPU pour éviter les instabilités GPU (comportement attendu).
 - `SWC lockfile patched` / `Failed to patch lockfile` :
   ```bash

@@ -5,6 +5,7 @@ torchaudio==2.6.0
 diffusers==0.29.0
 transformers==4.46.3
 safetensors==0.5.3
+huggingface_hub
 conformer==0.3.2
 resemble-perth==1.0.1
 spacy-pkuseg

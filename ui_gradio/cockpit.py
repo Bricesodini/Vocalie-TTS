@@ -131,20 +131,30 @@ def build_cockpit() -> gr.Blocks:
             update_engine,
             inputs=[engine, supports_ref_state],
             outputs=[voice, generate_btn, status],
+            api_name=False,
         )
         demo.load(
             update_engine,
             inputs=[engine, supports_ref_state],
             outputs=[voice, generate_btn, status],
+            api_name=False,
         )
         generate_btn.click(
             generate_tts,
             inputs=[text, engine, voice, supports_ref_state],
             outputs=[audio, status],
+            api_name=False,
         )
 
     return demo
 
 
 if __name__ == "__main__":
-    build_cockpit().launch()
+    debug_env = os.environ.get("GRADIO_DEBUG", "")
+    debug = debug_env.lower() in {"1", "true", "yes", "on"}
+    build_cockpit().launch(
+        server_name="127.0.0.1",
+        share=False,
+        show_api=False,
+        debug=debug,
+    )

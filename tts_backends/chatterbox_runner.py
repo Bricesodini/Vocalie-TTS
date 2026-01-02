@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 import traceback
@@ -12,7 +13,11 @@ from typing import Any
 import numpy as np
 import soundfile as sf
 
-from tts_engine import TTSEngine
+BASE_DIR = Path(__file__).resolve().parents[1]
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+from tts_backends.chatterbox_impl import ChatterboxEngine
 
 
 def _read_payload() -> dict:
@@ -31,7 +36,7 @@ def _write_response(payload: dict) -> None:
 
 
 def _synthesize_chunk(
-    engine: TTSEngine,
+    engine: ChatterboxEngine,
     text: str,
     *,
     voice_ref_path: str | None,
@@ -53,7 +58,7 @@ def _synthesize_chunk(
         effective_cfg = float(multilang_cfg_weight)
         language_kw = "language_id"
 
-    audio, _ = engine._synthesize_text(
+    audio, _ = engine.synthesize_text(
         tts,
         text,
         voice_ref_path,
@@ -63,7 +68,6 @@ def _synthesize_chunk(
         float(repetition_penalty),
         backend_language,
         language_kw,
-        False,
     )
     sr = int(engine.sample_rate or tts.sr)
     retried = False
@@ -110,19 +114,20 @@ def main() -> int:
         temperature = float(payload.get("temperature", 0.5))
         repetition_penalty = float(payload.get("repetition_penalty", 1.35))
 
-        engine = TTSEngine()
-        audio, sr, meta = _synthesize_chunk(
-            engine,
-            text,
-            voice_ref_path=voice_ref_path,
-            lang=lang,
-            tts_model_mode=tts_model_mode,
-            multilang_cfg_weight=multilang_cfg_weight,
-            exaggeration=exaggeration,
-            cfg_weight=cfg_weight,
-            temperature=temperature,
-            repetition_penalty=repetition_penalty,
-        )
+        with contextlib.redirect_stdout(sys.stderr):
+            engine = ChatterboxEngine()
+            audio, sr, meta = _synthesize_chunk(
+                engine,
+                text,
+                voice_ref_path=voice_ref_path,
+                lang=lang,
+                tts_model_mode=tts_model_mode,
+                multilang_cfg_weight=multilang_cfg_weight,
+                exaggeration=exaggeration,
+                cfg_weight=cfg_weight,
+                temperature=temperature,
+                repetition_penalty=repetition_penalty,
+            )
         out_path = str(Path(out_path).expanduser().resolve())
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         sf.write(out_path, audio, sr)

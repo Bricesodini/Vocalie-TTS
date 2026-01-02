@@ -59,8 +59,14 @@ def _run_chatterbox_runner(payload: dict, timeout_s: float = 180.0) -> dict:
         raise BackendUnavailableError("Chatterbox runner returned no output.")
     try:
         data = json.loads(stdout)
-    except json.JSONDecodeError as exc:
-        raise BackendUnavailableError("Chatterbox runner returned invalid JSON.") from exc
+    except json.JSONDecodeError:
+        lines = [line for line in stdout.splitlines() if line.strip()]
+        if not lines:
+            raise BackendUnavailableError("Chatterbox runner returned invalid JSON.")
+        try:
+            data = json.loads(lines[-1])
+        except json.JSONDecodeError as exc:
+            raise BackendUnavailableError("Chatterbox runner returned invalid JSON.") from exc
     if not data.get("ok"):
         error = data.get("error") or "Chatterbox runner failed."
         trace = data.get("trace")

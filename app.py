@@ -2867,18 +2867,30 @@ def build_ui() -> gr.Blocks:
         session_state = gr.State({"dir": None, "json": None})
         confirm_state = gr.State({"pending": None, "ts": 0.0})
 
-        refresh_btn.click(refresh_dropdown, inputs=ref_dropdown, outputs=ref_dropdown)
+        refresh_btn.click(
+            refresh_dropdown,
+            inputs=ref_dropdown,
+            outputs=ref_dropdown,
+            api_name=False,
+        )
         upload.upload(
             fn=handle_upload,
             inputs=[upload, ref_dropdown, logs_box],
             outputs=[ref_dropdown, logs_box],
+            api_name=False,
         )
         adjust_btn.click(
             fn=handle_adjust,
             inputs=[text_input, target_duration, logs_box],
             outputs=[adjusted_preview, adjust_info, logs_box],
+            api_name=False,
         )
-        apply_btn.click(fn=apply_adjusted, inputs=adjusted_preview, outputs=text_input)
+        apply_btn.click(
+            fn=apply_adjusted,
+            inputs=adjusted_preview,
+            outputs=text_input,
+            api_name=False,
+        )
         text_input.change(
             fn=handle_text_adjustment,
             inputs=[
@@ -2892,6 +2904,7 @@ def build_ui() -> gr.Blocks:
                 adjust_info,
                 adjust_log_box,
             ],
+            api_name=False,
         )
         auto_adjust_toggle.change(
             fn=handle_text_adjustment,
@@ -2906,6 +2919,7 @@ def build_ui() -> gr.Blocks:
                 adjust_info,
                 adjust_log_box,
             ],
+            api_name=False,
         )
         show_adjust_log_toggle.change(
             fn=handle_text_adjustment,
@@ -2920,6 +2934,7 @@ def build_ui() -> gr.Blocks:
                 adjust_info,
                 adjust_log_box,
             ],
+            api_name=False,
         )
         direction_load_btn.click(
             fn=handle_direction_load_snapshot,
@@ -2931,16 +2946,19 @@ def build_ui() -> gr.Blocks:
                 logs_box,
             ],
             outputs=[direction_snapshot_box, logs_box],
+            api_name=False,
         )
         direction_snapshot_box.change(
             fn=update_direction_controls,
             inputs=[direction_enabled_toggle, direction_snapshot_box],
             outputs=[insert_chunk_btn, preview_chunks_btn],
+            api_name=False,
         )
         direction_enabled_toggle.change(
             fn=update_direction_controls,
             inputs=[direction_enabled_toggle, direction_snapshot_box],
             outputs=[insert_chunk_btn, preview_chunks_btn],
+            api_name=False,
         )
         preview_chunks_btn.click(
             fn=handle_direction_preview,
@@ -2952,6 +2970,7 @@ def build_ui() -> gr.Blocks:
                 logs_box,
             ],
             outputs=[chunk_preview_box, logs_box],
+            api_name=False,
         )
         insert_chunk_btn.click(
             fn=append_chunk_marker,
@@ -2978,21 +2997,25 @@ def build_ui() -> gr.Blocks:
               return next;
             }
             """,
+            api_name=False,
         )
         edit_enabled_toggle.change(
             fn=update_edit_panel_state,
             inputs=[edit_enabled_toggle, trim_silence_toggle, normalize_toggle],
             outputs=[edit_panel, generate_edit_btn, target_dbfs_slider],
+            api_name=False,
         )
         trim_silence_toggle.change(
             fn=update_edit_panel_state,
             inputs=[edit_enabled_toggle, trim_silence_toggle, normalize_toggle],
             outputs=[edit_panel, generate_edit_btn, target_dbfs_slider],
+            api_name=False,
         )
         normalize_toggle.change(
             fn=update_edit_panel_state,
             inputs=[edit_enabled_toggle, trim_silence_toggle, normalize_toggle],
             outputs=[edit_panel, generate_edit_btn, target_dbfs_slider],
+            api_name=False,
         )
         generate_edit_btn.click(
             fn=handle_generate_edited_audio,
@@ -3008,6 +3031,7 @@ def build_ui() -> gr.Blocks:
                 logs_box,
             ],
             outputs=[edited_audio, edited_path_box, logs_box],
+            api_name=False,
         )
         export_raw_btn.click(
             fn=handle_export_raw_to_output,
@@ -3020,11 +3044,13 @@ def build_ui() -> gr.Blocks:
                 logs_box,
             ],
             outputs=[raw_export_path_box, logs_box],
+            api_name=False,
         )
         open_output_btn.click(
             fn=handle_open_output_dir,
             inputs=[output_dir_box, logs_box],
             outputs=[logs_box],
+            api_name=False,
         )
         param_widget_list = [param_widgets[key] for key in all_param_keys()]
         engine_dropdown.change(
@@ -3055,6 +3081,7 @@ def build_ui() -> gr.Blocks:
                 inter_chunk_gap_help,
                 *param_widget_list,
             ],
+            api_name=False,
         )
         language_dropdown.change(
             fn=handle_language_change,
@@ -3069,6 +3096,7 @@ def build_ui() -> gr.Blocks:
                 warnings_md,
                 *param_widget_list,
             ],
+            api_name=False,
         )
         chatterbox_mode_dropdown.change(
             fn=handle_chatterbox_mode_change,
@@ -3082,6 +3110,7 @@ def build_ui() -> gr.Blocks:
                 warnings_md,
                 *param_widget_list,
             ],
+            api_name=False,
         )
         install_backend_btn.click(
             fn=handle_install_backend,
@@ -3093,6 +3122,7 @@ def build_ui() -> gr.Blocks:
                 generate_btn,
                 install_logs_box,
             ],
+            api_name=False,
         )
         piper_refresh_button.click(
             fn=refresh_piper_voices,
@@ -3105,6 +3135,7 @@ def build_ui() -> gr.Blocks:
                 warnings_md,
                 install_logs_box,
             ],
+            api_name=False,
         )
         piper_install_voice_button.click(
             fn=install_default_piper_voice,
@@ -3117,6 +3148,7 @@ def build_ui() -> gr.Blocks:
                 warnings_md,
                 install_logs_box,
             ],
+            api_name=False,
         )
         if "voice_id" in param_widgets:
             param_widgets["voice_id"].change(
@@ -3136,6 +3168,7 @@ def build_ui() -> gr.Blocks:
                     warnings_md,
                     *param_widget_list,
                 ],
+                api_name=False,
             )
         uninstall_backend_btn.click(
             fn=handle_uninstall_backend,
@@ -3147,16 +3180,19 @@ def build_ui() -> gr.Blocks:
                 generate_btn,
                 install_logs_box,
             ],
+            api_name=False,
         )
         choose_btn.click(
             fn=handle_choose_output,
             inputs=[output_dir_box, logs_box],
             outputs=[output_dir_box, logs_box],
+            api_name=False,
         )
         verbose_logs_toggle.change(
             fn=handle_toggle_verbose_logs,
             inputs=[verbose_logs_toggle, logs_box],
             outputs=[logs_box],
+            api_name=False,
         )
         copy_logs_btn.click(
             fn=None,
@@ -3170,6 +3206,7 @@ def build_ui() -> gr.Blocks:
               return [];
             }
             """,
+            api_name=False,
         )
         load_preset_outputs = [
             ref_dropdown,
@@ -3207,6 +3244,7 @@ def build_ui() -> gr.Blocks:
             fn=handle_load_preset,
             inputs=[preset_dropdown, logs_box],
             outputs=load_preset_outputs,
+            api_name=False,
         )
         save_preset_btn.click(
             fn=handle_save_preset_confirm,
@@ -3234,6 +3272,7 @@ def build_ui() -> gr.Blocks:
                 delete_preset_btn,
                 stop_btn,
             ],
+            api_name=False,
         )
         delete_preset_btn.click(
             fn=handle_delete_preset_confirm,
@@ -3247,6 +3286,7 @@ def build_ui() -> gr.Blocks:
                 delete_preset_btn,
                 stop_btn,
             ],
+            api_name=False,
         )
         cancel_confirm_btn.click(
             fn=handle_cancel_confirm,
@@ -3258,6 +3298,7 @@ def build_ui() -> gr.Blocks:
                 delete_preset_btn,
                 stop_btn,
             ],
+            api_name=False,
         )
 
         generate_btn.click(
@@ -3292,6 +3333,7 @@ def build_ui() -> gr.Blocks:
                 raw_export_path_box,
                 session_state,
             ],
+            api_name=False,
         ).then(
             fn=handle_session_texts,
             inputs=[session_state],
@@ -3301,6 +3343,7 @@ def build_ui() -> gr.Blocks:
                 session_prep_log_md,
                 session_text_group,
             ],
+            api_name=False,
         )
         stop_btn.click(
             fn=handle_stop_confirm,
@@ -3317,6 +3360,7 @@ def build_ui() -> gr.Blocks:
                 edited_path_box,
                 raw_export_path_box,
             ],
+            api_name=False,
         )
 
     return demo
@@ -3325,9 +3369,15 @@ def build_ui() -> gr.Blocks:
 def main() -> None:
     demo = build_ui()
     port_env = os.environ.get("GRADIO_SERVER_PORT")
+    debug_env = os.environ.get("GRADIO_DEBUG", "")
     launch_kwargs = {
         "allowed_paths": [str(BASE_DIR), str(Path.home())],
     }
+    launch_kwargs.setdefault("server_name", "127.0.0.1")
+    launch_kwargs.setdefault("share", False)
+    launch_kwargs.setdefault("show_api", False)
+    if debug_env.lower() in {"1", "true", "yes", "on"}:
+        launch_kwargs.setdefault("debug", True)
     if port_env:
         try:
             launch_kwargs["server_port"] = int(port_env)

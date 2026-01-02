@@ -1,0 +1,37 @@
+{
+  "engine_id": "xtts_v2",
+  "engine_slug": "xtts_v2",
+  "ref_name": null,
+  "text": {
+    "editorial": "test",
+    "tts_ready": "test",
+    "prep_log_md": ""
+  },
+  "text_legacy": "test",
+  "created_at": "2026-01-02T21:24:35+00:00",
+  "artifacts": {
+    "raw_global": "takes/global/global_v1_raw.wav"
+  },
+  "chunks": [
+    {
+      "index": 1,
+      "text": "test",
+      "start_word": 1,
+      "est_seconds": 0.3846153846153846
+    }
+  ],
+  "chunk_mode": "single",
+  "artifacts_list": [
+    "/Users/bricesodini/01_ai-stack/Chatterbox/work/.sessions/20260102_212435_test/takes/global/global_v1_raw.wav"
+  ],
+  "takes": {
+    "global": [
+      "v1"
+    ],
+    "processed": []
+  },
+  "active_take": {
+    "global": "v1"
+  },
+  "active_listen": "raw"
+}

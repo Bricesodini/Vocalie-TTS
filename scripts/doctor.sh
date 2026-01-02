@@ -39,6 +39,18 @@ if command -v python3 >/dev/null 2>&1; then
   check_version_ge "python3" "$py_ver" "3.11"
 fi
 
+if command -v python3 >/dev/null 2>&1; then
+  gr_versions=$(python3 - <<'PY'
+try:
+    import gradio, gradio_client
+    print(f"gradio={gradio.__version__} gradio_client={gradio_client.__version__}")
+except Exception:
+    print("gradio/gradio_client not importable")
+PY
+)
+  echo "[info] $gr_versions"
+fi
+
 if command -v node >/dev/null 2>&1; then
   node_ver=$(node -p "process.versions.node.split('.').slice(0,2).join('.')")
   check_version_ge "node" "$node_ver" "20"

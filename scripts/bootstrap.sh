@@ -85,6 +85,16 @@ clean_all() {
   rm -rf "$CORE_VENV" "$ROOT_DIR/.venvs"
 }
 
+run_smoke() {
+  local smoke="$ROOT_DIR/scripts/smoke.sh"
+  if [[ -x "$smoke" ]]; then
+    echo "Running smoke tests..."
+    "$smoke"
+  else
+    echo "Smoke script not found or not executable: $smoke"
+  fi
+}
+
 cd "$ROOT_DIR"
 
 case "$MODE" in
@@ -92,12 +102,14 @@ case "$MODE" in
     require_python
     install_core
     install_chatterbox
+    run_smoke
     ;;
   std)
     require_python
     install_core
     install_chatterbox
     install_std_engines
+    run_smoke
     ;;
   clean)
     clean_all
