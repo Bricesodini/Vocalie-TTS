@@ -1,0 +1,73 @@
+/* Page */
+.v-app {
+  --v-bg-app: #141416;
+  --v-bg-card: #3f3f46;
+  --v-border-card: #3f3f46;
+  --v-gap: 16px;
+  --v-radius: 14px;
+  --v-pad: 16px;
+  --v-debug-card-bg: rgba(0, 140, 255, 0.3);
+  background: var(--v-bg-app);
+  color: rgba(255, 255, 255, 0.9);
+  min-height: 100vh;
+  padding: var(--v-gap);
+}
+
+/* Conteneur .v-section */
+.v-section {
+  background: var(--v-bg-card);
+  border: 1px solid var(--v-border-card);
+  border-radius: var(--v-radius);
+  padding: var(--v-pad);
+  box-shadow: none;
+}
+
+/* Espacement interne des blocs (sans casser le layout Gradio) */
+.v-section > * + * {
+  margin-top: 12px;
+}
+
+.v-title {
+  font-size: 20px;
+  font-weight: 800;
+  margin: 0 0 12px 0;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+/* Accents optionnels */
+.v-presets {
+  border-left: 6px solid rgba(140, 90, 255, 0.9);
+}
+
+.v-prep {
+  border-left: 6px solid rgba(60, 180, 255, 0.9);
+}
+
+.v-gen {
+  border-left: 6px solid rgba(255, 170, 50, 0.95);
+}
+
+.v-edit {
+  border-left: 6px solid rgba(80, 220, 160, 0.95);
+}
+
+.v-logs {
+  border-left: 6px solid rgba(160, 160, 160, 0.95);
+}
+
+/* Neutralisation interne (opt-in) */
+.v-section :where(.gr-block, .block, .wrap) {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+/* Typographie minimale */
+.v-section :where(h1, h2, h3, h4, h5, h6) {
+  margin: 0 0 0.5rem 0;
+  font-weight: 600;
+}
+
+.v-section :where(p, label, span) {
+  color: inherit;
+}
