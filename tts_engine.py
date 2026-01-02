@@ -34,6 +34,7 @@ from text_tools import (
     strip_legacy_tokens,
 )
 from logging_utils import is_verbose, verbosity_context
+from audio_defaults import SILENCE_MIN_MS, SILENCE_THRESHOLD
 
 LOGGER = logging.getLogger("chatterbox_tts")
 
@@ -51,8 +52,6 @@ LANGUAGE_MAP = {
 }
 ZERO_CROSS_RADIUS_MS = 10
 FADE_MS = 50
-SILENCE_THRESHOLD = 0.002
-SILENCE_MIN_MS = 20
 
 
 def _find_zero_crossing_near(audio: np.ndarray, center_idx: int, radius: int) -> int:

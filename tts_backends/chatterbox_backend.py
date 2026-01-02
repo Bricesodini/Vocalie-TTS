@@ -1,12 +1,75 @@
-"""Chatterbox TTS backend wrapper."""
+"""Chatterbox TTS backend wrapper (subprocess runner)."""
 
 from __future__ import annotations
 
+import json
+import subprocess
+import uuid
+from pathlib import Path
 from typing import Any, Dict, Optional
 
-from tts_engine import LANGUAGE_MAP, TTSEngine
+import numpy as np
+import soundfile as sf
 
-from .base import ParamSpec, TTSBackend
+from backend_install.paths import ROOT, python_path
+from backend_install.status import backend_status
+
+from .base import BackendUnavailableError, ParamSpec, TTSBackend
+
+
+LANGUAGE_MAP = {
+    "fr-FR": "fr",
+    "en-US": "en",
+    "en-GB": "en",
+    "es-ES": "es",
+    "de-DE": "de",
+    "it-IT": "it",
+    "pt-PT": "pt",
+    "nl-NL": "nl",
+}
+
+
+def _runner_path() -> Path:
+    return Path(__file__).resolve().parent / "chatterbox_runner.py"
+
+
+def _run_chatterbox_runner(payload: dict, timeout_s: float = 180.0) -> dict:
+    py = python_path("chatterbox")
+    if not py.exists():
+        raise BackendUnavailableError("Chatterbox venv introuvable.")
+    runner = _runner_path()
+    if not runner.exists():
+        raise BackendUnavailableError("Runner Chatterbox introuvable.")
+    try:
+        result = subprocess.run(
+            [str(py), str(runner)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise BackendUnavailableError("Chatterbox runner timeout.") from exc
+
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    if result.returncode != 0:
+        raise BackendUnavailableError(stderr or stdout or "Chatterbox runner failed.")
+    if not stdout:
+        raise BackendUnavailableError("Chatterbox runner returned no output.")
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise BackendUnavailableError("Chatterbox runner returned invalid JSON.") from exc
+    if not data.get("ok"):
+        error = data.get("error") or "Chatterbox runner failed."
+        trace = data.get("trace")
+        if trace:
+            error = f"{error}\n{trace}"
+        raise BackendUnavailableError(error)
+    if stderr:
+        data["stderr"] = stderr
+    return data
 
 
 class ChatterboxBackend(TTSBackend):
@@ -17,15 +80,11 @@ class ChatterboxBackend(TTSBackend):
 
     @classmethod
     def is_available(cls) -> bool:
-        try:
-            from chatterbox.tts import ChatterboxTTS  # noqa: F401
-        except Exception:
-            return False
-        return True
+        return backend_status("chatterbox").get("installed", False)
 
     @classmethod
     def unavailable_reason(cls) -> str | None:
-        return "Chatterbox backend requires the chatterbox package."
+        return backend_status("chatterbox").get("reason")
 
     def supported_languages(self) -> list[str]:
         return list(LANGUAGE_MAP.keys())
@@ -108,21 +167,26 @@ class ChatterboxBackend(TTSBackend):
         lang: Optional[str] = None,
         **params: Any,
     ) -> Dict[str, Any]:
-        engine = TTSEngine()
-        tts_model_mode = params.pop("tts_model_mode", params.pop("chatterbox_mode", "fr_finetune"))
-        multilang_cfg_weight = params.pop("multilang_cfg_weight", 0.5)
-        _, _, meta = engine.generate_longform(
-            script=script,
-            audio_prompt_path=voice_ref_path,
-            out_path=out_path,
-            tts_model_mode=tts_model_mode,
-            tts_language=lang or "fr-FR",
-            multilang_cfg_weight=multilang_cfg_weight,
-            **params,
+        payload = _build_runner_payload(
+            text=script,
+            out_wav_path=out_path,
+            voice_ref_path=voice_ref_path,
+            lang=lang,
+            params=params,
         )
-        meta.setdefault("warnings", [])
-        meta["backend_id"] = self.id
-        meta["backend_lang"] = lang
+        result = _run_chatterbox_runner(payload)
+        meta = {
+            "backend_id": self.id,
+            "backend_lang": lang,
+            "out_path": result.get("out_path") or out_path,
+            "duration_s": result.get("duration_s"),
+            "retry": bool(result.get("retry")),
+        }
+        logs = result.get("logs")
+        if logs:
+            meta["runner_logs"] = logs
+        if result.get("stderr"):
+            meta["stderr"] = result.get("stderr")
         return meta
 
     def synthesize_chunk(
@@ -133,46 +197,56 @@ class ChatterboxBackend(TTSBackend):
         lang: Optional[str] = None,
         **params: Any,
     ):
-        engine = TTSEngine()
-        tts_model_mode = params.get("tts_model_mode", params.get("chatterbox_mode", "fr_finetune"))
-        multilang_cfg_weight = params.get("multilang_cfg_weight", 0.5)
-        requested_language = engine._resolve_language(tts_model_mode, lang or "fr-FR")
-        backend_language = requested_language
-        effective_cfg = float(params.get("cfg_weight", 0.6))
-        if tts_model_mode == "multilang":
-            backend_language = engine._map_multilang_language(requested_language)
-            effective_cfg = float(multilang_cfg_weight)
-        tts = engine._get_backend(tts_model_mode)
-        audio, _ = engine._synthesize_text(
-            tts,
-            text,
-            voice_ref_path,
-            float(params.get("exaggeration", 0.5)),
-            float(effective_cfg),
-            float(params.get("temperature", 0.5)),
-            float(params.get("repetition_penalty", 1.35)),
-            backend_language,
-            "language_id" if tts_model_mode == "multilang" else None,
-            False,
+        tmp_dir = ROOT / ".assets" / "chatterbox" / ".tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        tmp_wav = tmp_dir / f"chatterbox_{uuid.uuid4().hex}.wav"
+        payload = _build_runner_payload(
+            text=text,
+            out_wav_path=str(tmp_wav),
+            voice_ref_path=voice_ref_path,
+            lang=lang,
+            params=params,
         )
-        sr = int(engine.sample_rate or tts.sr)
-        retried = False
-        duration = len(audio) / sr if sr else 0.0
-        if len(text) > 80 and duration < 1.2:
-            retried = True
-            retry_audio, _ = engine._synthesize_text(
-                tts,
-                text,
-                voice_ref_path,
-                float(params.get("exaggeration", 0.5)),
-                min(1.5, float(effective_cfg) + 0.05),
-                max(0.2, float(params.get("temperature", 0.5)) - 0.05),
-                float(params.get("repetition_penalty", 1.35)),
-                backend_language,
-                "language_id" if tts_model_mode == "multilang" else None,
-                False,
-            )
-            retry_duration = len(retry_audio) / sr if sr else 0.0
-            if retry_duration > duration:
-                audio = retry_audio
-        return audio, sr, {"retry": retried}
+        result = _run_chatterbox_runner(payload)
+        if not tmp_wav.exists():
+            raise BackendUnavailableError("Chatterbox runner n'a pas produit de WAV.")
+        audio, sr = sf.read(str(tmp_wav), dtype="float32")
+        try:
+            tmp_wav.unlink(missing_ok=True)
+        except OSError:
+            pass
+        meta = {
+            "retry": bool(result.get("retry")),
+            "duration_s": result.get("duration_s"),
+        }
+        logs = result.get("logs")
+        if logs:
+            meta["runner_logs"] = logs
+        if result.get("stderr"):
+            meta["stderr"] = result.get("stderr")
+        return np.asarray(audio, dtype=np.float32), int(sr), meta
+
+
+def _build_runner_payload(
+    *,
+    text: str,
+    out_wav_path: str,
+    voice_ref_path: Optional[str],
+    lang: Optional[str],
+    params: dict[str, Any],
+) -> dict:
+    tts_model_mode = params.get("tts_model_mode", params.get("chatterbox_mode", "fr_finetune"))
+    payload = {
+        "text": text,
+        "out_wav_path": out_wav_path,
+        "tts_model_mode": tts_model_mode,
+        "lang": lang,
+        "multilang_cfg_weight": params.get("multilang_cfg_weight", 0.5),
+        "exaggeration": params.get("exaggeration", 0.5),
+        "cfg_weight": params.get("cfg_weight", 0.6),
+        "temperature": params.get("temperature", 0.5),
+        "repetition_penalty": params.get("repetition_penalty", 1.35),
+    }
+    if voice_ref_path:
+        payload["ref_audio_path"] = voice_ref_path
+    return payload

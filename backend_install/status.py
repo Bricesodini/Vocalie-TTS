@@ -41,8 +41,6 @@ def import_ok(engine_id: str, import_probes: List[str]) -> Tuple[bool, str]:
 
 
 def backend_status(engine_id: str) -> dict:
-    if engine_id == "chatterbox":
-        return {"installed": True, "reason": "venv principal"}
     manifest = get_manifest(engine_id)
     if manifest is None:
         return {"installed": False, "reason": "manifest introuvable"}

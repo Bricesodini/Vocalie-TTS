@@ -67,7 +67,7 @@ from tts_backends.piper_assets import (
 )
 from tts_backends.xtts_backend import XTTS_ASSETS_DIR
 from tts_backends.base import BackendUnavailableError, coerce_language, pick_default_language
-from tts_engine import SILENCE_MIN_MS, SILENCE_THRESHOLD, TTSEngine
+from audio_defaults import SILENCE_MIN_MS, SILENCE_THRESHOLD
 from tts_pipeline import _find_active_range, generate_raw_wav
 from session_manager import (
     build_session_payload,
@@ -87,6 +87,7 @@ LOGGER = logging.getLogger("chatterbox_app")
 BASE_DIR = Path(__file__).resolve().parent
 LEXIQUE_PATH = BASE_DIR / "lexique_tts_fr.json"
 
+
 work_env = os.environ.get("VOCALIE_WORK_DIR")
 WORK_DIR = Path(work_env).expanduser() if work_env else BASE_DIR / "work"
 WORK_DIR.mkdir(parents=True, exist_ok=True)
@@ -98,7 +99,6 @@ DEFAULT_OUTPUT_DIR = Path(output_env).expanduser() if output_env else BASE_DIR /
 DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 DEFAULT_EDIT_TARGET_DBFS = -1.0
 
-ENGINE: Optional[TTSEngine] = None
 _LOAD_PRESET_OUTPUT_COUNT: int | None = None
 
 _JOB_LOCK = Lock()
@@ -566,13 +566,6 @@ def mac_choose_folder(initial_dir: str | None = None) -> str | None:
         return out if out else None
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
-
-
-def get_engine() -> TTSEngine:
-    global ENGINE
-    if ENGINE is None:
-        ENGINE = TTSEngine()
-    return ENGINE
 
 
 def _reset_job_state() -> dict:
@@ -2475,89 +2468,32 @@ def build_ui() -> gr.Blocks:
 
     with gr.Blocks(
         title="Vocalie-TTS",
-        css=(
-                ".gradio-container { font-family: -apple-system, \"SF Pro Text\", \"SF Pro Display\", "
-                "\"Helvetica Neue\", Helvetica, Arial, sans-serif; }"
+        css="""
+        .gradio-container .prose :last-child {
+          margin-bottom: 5px;
+          margin-top: 5px;
+          margin-left: 9px;
+        }
 
-                "/* Section headers (elem_classes=[\"section-title\"]) */"
-                ".section-title {"
-                "  background: #3f4046;"
-                "  padding: 0.4rem 0.85rem;"
-                "  border-radius: 8px 8px 0 0;"
-                "  margin: 0.35rem 0 0.35rem 0;"   
-                "}"
-                ".section-title .prose { padding: 0 !important; margin: 0 !important; }"
-                ".section-title p { margin: 0 !important; }"
-                ".section-title h1, .section-title h2, .section-title h3 {"
-                "  margin: 0 !important;"
-                "  line-height: 1.05;"
-                "  font-weight: 650;"
-                "}"
-                ".section-title h2 { font-size: 1.35rem; }"
-                ".section-title h3 { font-size: 1.2rem; }"
+        .gradio-container .prose h2 {
+          margin-top: 6px;
+        }
 
-                "/* Accordion headers */"
-                ".gr-accordion > .label,"
-                ".gr-accordion > .label span,"
-                ".gr-accordion > .label .prose {"
-                "  font-size: 1.35rem;"
-                "  font-weight: 650;"
-                "}"
-                ".gr-accordion > .label {"
-                "  background: #3f4046;"
-                "  padding: 0.4rem 0.85rem;"
-                "  border-radius: 8px;"
-                "  margin: 0.35rem 0 0.35rem 0;"
-                "}"
-                ".gr-accordion > .label .prose {"
-                "  padding: 0 !important;"
-                "  margin: 0 !important;"
-                "}"
-                "/* Section titles (Markdown headers) */"
-                ".vocalie-section h1,"
-                ".vocalie-section h2,"
-                ".vocalie-section h3 {"
-                "  font-size: 1.65rem !important;"
-                "  font-weight: 800 !important;"
-                "  line-height: 1.05 !important;"
-                "  margin: 0.15rem 0 0.65rem 0 !important;"
-                "}"
-
-                "/* Accordions: bigger label */"
-                ".vocalie-accordion > .label,"
-                ".vocalie-accordion > .label span,"
-                ".vocalie-accordion > .label .prose {"
-                "  font-size: 1.35rem !important;"
-                "  font-weight: 700 !important;"
-                "}"
-
-                "/* Subsection titles and small info lines */"
-                ".subhead {"
-                "  margin: 0.65rem 0 0.45rem 0;"
-                "  padding: 0.25rem 0.6rem;"
-                "  border-radius: 6px;"
-                "  background: rgba(255,255,255,0.03);"
-                "}"
-                ".subhead .prose, .subhead .gr-markdown { margin: 0 !important; }"
-                ".subhead h3 { margin: 0 !important; line-height: 1.2; }"
-
-                ".inline-info {"
-                "  margin: 0.35rem 0 0.25rem 0;"
-                "  padding: 0.2rem 0.6rem;"
-                "  border-radius: 6px;"
-                "}"
-                ".inline-info .prose, .inline-info .gr-markdown { margin: 0 !important; }"
-                ".inline-info p { margin: 0 !important; }"
-
-                "/* Reduce extra vertical padding inside groups */"
-                ".gradio-container .gr-group { padding-top: 0.25rem !important; padding-bottom: 0.25rem !important; }"
-                ".gradio-container .gr-group > .wrap { padding-top: 0.25rem !important; padding-bottom: 0.25rem !important; }"
-            ),
-        ) as demo:
+        .gradio-container {
+          --block-radius: 14px;
+          --block-border-width: 5px;
+          --layout-gap: 0px;
+          --form-gap-width: 7px;
+          --button-border-width: 0px;
+          --button-large-radius: 30px;
+          --button-small-radius: 0px;
+        }
+        """,
+    ) as demo:
         set_verbosity(default_verbose_logs)
-        gr.Markdown("""# 🎙️ Chatterbox TTS FR\nInterface locale pour générer des voix off expressives en français.""")
-        with gr.Group():
-            gr.Markdown("## Presets", elem_classes=["section-title"])
+        gr.Markdown("# 🎙️ Chatterbox TTS FR\nInterface locale pour générer des voix off expressives en français.")
+        with gr.Group(elem_id="v-presets"):
+            gr.Markdown("## Presets")
             with gr.Row():
                 preset_dropdown = gr.Dropdown(
                     label=None,
@@ -2571,13 +2507,14 @@ def build_ui() -> gr.Blocks:
                     placeholder="ex: pub-dynamique",
                 )
             with gr.Row():
-                load_preset_btn = gr.Button("Charger", elem_classes=["accent-btn"])
-                save_preset_btn = gr.Button("Sauver", variant="secondary", elem_classes=["accent-btn"])
-                delete_preset_btn = gr.Button("Supprimer", variant="secondary", elem_classes=["accent-btn"])
+                load_preset_btn = gr.Button("Charger")
+                save_preset_btn = gr.Button("Sauver", variant="secondary")
+                delete_preset_btn = gr.Button("Supprimer", variant="secondary")
                 cancel_confirm_btn = gr.Button("Annuler", size="sm")
 
-        with gr.Accordion("1. Préparation", open=True, elem_id="prep-accordion", elem_classes=["vocalie-accordion"]):
-            with gr.Group(elem_classes=["vocalie-section"]):
+        with gr.Group(elem_id="v-prep"):
+            gr.Markdown("## Préparation")
+            with gr.Group(elem_id="v-prep-text"):
                 gr.Markdown("## Texte", elem_id="prep-text-title")
                 text_input = gr.Textbox(
                     label=None,
@@ -2596,7 +2533,9 @@ def build_ui() -> gr.Blocks:
                         value=default_show_adjust_log,
                     )
                 with gr.Row():
-                    target_duration = gr.Number(label="Durée cible (s)", value=None, precision=1, show_label=False)
+                    target_duration = gr.Number(
+                        label="Durée cible (s)", value=None, precision=1, show_label=False
+                    )
                     adjust_btn = gr.Button("Ajuster le texte")
                     apply_btn = gr.Button("Utiliser la suggestion")
                 adjusted_preview = gr.Textbox(
@@ -2613,27 +2552,27 @@ def build_ui() -> gr.Blocks:
                     interactive=False,
                     placeholder="Le texte ajusté pour le TTS apparaîtra ici...",
                 )
-                adjust_info = gr.Markdown("Durée estimée: --", elem_classes=["inline-info"])
-                adjust_log_box = gr.Markdown("", elem_classes=["inline-info"])
-            with gr.Accordion("Voir le texte final", open=False):
-                clean_text_box = gr.Textbox(
-                    label="Texte interprété (envoyé au TTS)",
-                    lines=3,
-                    max_lines=16,
-                    interactive=False,
-                    placeholder="Le texte sans balises apparaîtra ici...",
-                )
-                gr.Markdown(
-                    "⚠️ La ponctuation finale peut être renforcée à la synthèse, sans modifier cet aperçu."
-                )
-            with gr.Accordion("Direction de lecture", open=False):
+                adjust_info = gr.Markdown("Durée estimée: --")
+                adjust_log_box = gr.Markdown("")
+            gr.Markdown("### Voir le texte final")
+            clean_text_box = gr.Textbox(
+                label="Texte interprété (envoyé au TTS)",
+                lines=3,
+                max_lines=16,
+                interactive=False,
+                placeholder="Le texte sans balises apparaîtra ici...",
+            )
+            gr.Markdown(
+                "⚠️ La ponctuation finale peut être renforcée à la synthèse, sans modifier cet aperçu."
+            )
+            with gr.Group(elem_id="v-prep-direction"):
+                gr.Markdown("### Direction de lecture")
                 direction_enabled_toggle = gr.Checkbox(
                     label="Découpage manuel (recommandé)",
                     value=default_direction_enabled,
                 )
                 gr.Markdown(
                     "Insérez `[[CHUNK]]` pour définir les limites envoyées au TTS.",
-                    elem_classes=["inline-info"],
                 )
                 with gr.Row():
                     direction_source_dropdown = gr.Dropdown(
@@ -2678,13 +2617,9 @@ def build_ui() -> gr.Blocks:
                     interactive=False,
                 )
                 session_prep_log_md = gr.Markdown("")
-        with gr.Accordion(
-            "2. Génération / Régénération",
-            open=True,
-            elem_id="generation-accordion",
-            elem_classes=["vocalie-accordion"],
-        ):
-            with gr.Group(elem_classes=["vocalie-section"]):
+        with gr.Group(elem_id="v-gen"):
+            gr.Markdown("## Génération / Régénération")
+            with gr.Group(elem_id="v-gen-refs"):
                 gr.Markdown("## Références vocales", elem_id="generation-refs-title")
                 with gr.Row():
                     ref_dropdown = gr.Dropdown(
@@ -2698,7 +2633,6 @@ def build_ui() -> gr.Blocks:
                     refresh_btn = gr.Button("Refresh", size="sm")
                 ref_support_note = gr.Markdown(
                     backend_ref_note(default_backend),
-                    elem_classes=["inline-info"],
                 )
                 with gr.Accordion("Importer des fichiers audio", open=False):
                     upload = gr.Files(
@@ -2706,8 +2640,8 @@ def build_ui() -> gr.Blocks:
                         file_types=list(ALLOWED_EXTENSIONS),
                         file_count="multiple",
                     )
-            with gr.Group():
-                gr.Markdown("### Modèle / Langue", elem_classes=["subhead"])
+            with gr.Group(elem_id="v-gen-model"):
+                gr.Markdown("### Modèle / Langue")
                 with gr.Row():
                     engine_dropdown = gr.Dropdown(
                         label="Moteur",
@@ -2755,17 +2689,14 @@ def build_ui() -> gr.Blocks:
                     )
                 lang_locked_md = gr.Markdown(
                     default_lang_locked_text,
-                    elem_classes=["inline-info"],
                     visible=not show_lang_default,
                 )
                 voice_label_md = gr.Markdown(
                     default_voice_label_text,
-                    elem_classes=["inline-info"],
                     visible=default_voice_label_visible,
                 )
                 piper_voice_status_md = gr.Markdown(
                     piper_voice_status_text(voices) if default_tts_engine == "piper" else "",
-                    elem_classes=["inline-info"],
                     visible=default_tts_engine == "piper",
                 )
                 with gr.Row():
@@ -2779,7 +2710,6 @@ def build_ui() -> gr.Blocks:
                     )
                 piper_catalog_md = gr.Markdown(
                     "Catalogue voix Piper : https://huggingface.co/rhasspy/piper-voices/tree/main",
-                    elem_classes=["inline-info"],
                     visible=default_tts_engine == "piper",
                 )
                 default_supports_speed = bool(
@@ -2789,19 +2719,19 @@ def build_ui() -> gr.Blocks:
                 )
                 piper_speed_note_md = gr.Markdown(
                     "Vitesse non supportée par cette voix",
-                    elem_classes=["inline-info"],
-                    visible=default_tts_engine == "piper" and bool(default_voice_value) and not default_supports_speed,
+                    visible=default_tts_engine == "piper"
+                    and bool(default_voice_value)
+                    and not default_supports_speed,
                 )
                 if speed_spec:
                     speed_widget = create_param_widget(speed_spec, speed_value, speed_visible)
                     param_widgets["speed"] = speed_widget
-                warnings_md = gr.Markdown("", elem_classes=["inline-info"], visible=False)
+                warnings_md = gr.Markdown("", visible=False)
                 xtts_segmentation_md = gr.Markdown(
                     "Segmentation: XTTS native (recommandée)",
-                    elem_classes=["inline-info"],
                     visible=default_tts_engine == "xtts",
                 )
-                gr.Markdown("### Paramètres moteur", elem_classes=["subhead"])
+                gr.Markdown("### Paramètres moteur")
                 param_keys = [key for key in all_param_keys() if key not in ("chatterbox_mode", "speed")]
                 for key in param_keys:
                     spec = param_specs.get(key)
@@ -2827,12 +2757,10 @@ def build_ui() -> gr.Blocks:
                 inter_chunk_gap_help = gr.Markdown(
                     "Ajoute un silence au montage entre les chunks (respiration). "
                     "N’affecte pas le texte ni la génération.",
-                    elem_classes=["inline-info"],
                     visible=default_tts_engine == "chatterbox",
                 )
                 engine_status_md = gr.Markdown(
                     engine_status_markdown(default_tts_engine),
-                    elem_classes=["inline-info"],
                 )
                 install_backend_btn = gr.Button(
                     "Installer",
@@ -2845,7 +2773,7 @@ def build_ui() -> gr.Blocks:
                     visible=backend_status(default_tts_engine).get("installed")
                     and default_tts_engine != "chatterbox",
                 )
-            with gr.Group(elem_classes=["vocalie-section"]):
+            with gr.Group(elem_id="v-gen-output"):
                 gr.Markdown("## Sortie", elem_id="generation-output-title")
                 with gr.Row():
                     output_dir_box = gr.Textbox(
@@ -2877,18 +2805,19 @@ def build_ui() -> gr.Blocks:
                     stop_btn = gr.Button("STOP", variant="secondary")
                 output_path_box = gr.Textbox(label="Fichier généré", interactive=False)
                 open_output_btn = gr.Button("Ouvrir le dossier output", size="sm")
-                gr.Markdown("_Régénération par chunk arrive en RUN 9._", elem_classes=["inline-info"])
+                gr.Markdown("_Régénération par chunk arrive en RUN 9._")
 
             raw_audio = gr.Audio(
                 label="RAW (référence)",
                 type="filepath",
                 autoplay=False,
             )
-            gr.Markdown("RAW immuable (référence).", elem_classes=["inline-info"])
+            gr.Markdown("RAW immuable (référence).")
             with gr.Row():
                 export_raw_btn = gr.Button("Exporter RAW", size="sm")
                 raw_export_path_box = gr.Textbox(label="RAW exporté", interactive=False)
-            with gr.Accordion("3. Édition audio", open=False):
+            with gr.Group(elem_id="v-edit"):
+                gr.Markdown("## Édition")
                 edit_enabled_toggle = gr.Checkbox(
                     label="Activer l’édition (minimal)",
                     value=False,
@@ -2919,7 +2848,8 @@ def build_ui() -> gr.Blocks:
                         autoplay=False,
                     )
                     edited_path_box = gr.Textbox(label="Fichier édité", interactive=False)
-            with gr.Accordion("🧾 Logs", open=False):
+            with gr.Group(elem_id="v-logs"):
+                gr.Markdown("## Logs")
                 with gr.Row():
                     verbose_logs_toggle = gr.Checkbox(
                         label="Logs détaillés",

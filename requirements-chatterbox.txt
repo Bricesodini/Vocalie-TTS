@@ -1,0 +1,14 @@
+chatterbox-tts==0.1.6
+numpy<1.26,>=1.24
+torch==2.6.0
+torchaudio==2.6.0
+diffusers==0.29.0
+transformers==4.46.3
+safetensors==0.5.3
+conformer==0.3.2
+resemble-perth==1.0.1
+spacy-pkuseg
+pykakasi==2.3.0
+omegaconf
+pyloudnorm
+s3tokenizer

@@ -20,6 +20,14 @@ class BackendManifest:
 
 
 MANIFESTS: Dict[str, BackendManifest] = {
+    "chatterbox": BackendManifest(
+        engine_id="chatterbox",
+        python="python3.11",
+        pip_packages=["-r", "requirements-chatterbox.txt"],
+        system_hints=["ffmpeg (recommandé)"],
+        import_probes=["chatterbox"],
+        post_install_checks=[["-c", "import chatterbox; print('OK')"]],
+    ),
     "xtts": BackendManifest(
         engine_id="xtts",
         python=sys.executable,
