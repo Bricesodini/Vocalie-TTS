@@ -27,3 +27,12 @@ def test_engine_schema_xtts_requires_ref(api_client):
     constraints = resp.json().get("constraints") or {}
     required = constraints.get("required") or []
     assert "voice_id" in required
+
+
+def test_engine_schema_bark_fields(api_client):
+    client = api_client
+
+    resp = client.get("/v1/tts/engine_schema", params={"engine": "bark"})
+    assert resp.status_code == 200
+    keys = {field["key"] for field in resp.json()["fields"]}
+    assert {"voice_preset", "text_temp", "waveform_temp", "seed", "device"}.issubset(keys)

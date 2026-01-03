@@ -12,7 +12,7 @@
 ## Présentation
 
 Vocalie-TTS est une interface locale pour produire des voix off en français avec un pipeline simple, stable et reproductible.
-Le cœur du produit est la génération TTS ; l’édition audio avancée a été supprimée pour éviter les comportements implicites.
+Le cœur du produit est la génération TTS.
 
 **L’API est la source de vérité de l’application.** Le Frontend (Next.js) et Gradio sont tous deux des clients de l’API. Gradio ne constitue pas l’interface de production mais sert de cockpit ou d’outil de debug pour explorer et contrôler le backend.
 
@@ -33,28 +33,58 @@ Objectifs :
 
 ## Principe fondamental
 
-Vocalie‑TTS repose sur un principe simple : **aucun comportement implicite**.
+Vocalie‑TTS est pensé pour trouver un **équilibre entre automatisation et approche manuelle** : l’app t’aide à préparer, structurer et fiabiliser la génération, tout en te laissant le contrôle sur les décisions qui impactent réellement le rendu.
 
-- Aucun découpage automatique caché
-- Aucun post‑traitement audio non demandé
-- Aucun paramètre envoyé à un moteur qui ne le supporte pas
+Principe : **automatiser ce qui est répétitif, garder explicite ce qui influence le son**.
 
-Tout ce qui influence le rendu audio est **visible, explicite et traçable** par l’utilisateur.
+- Pas de découpage automatique caché (le chunking reste une décision visible)
+- Pas de post‑traitement audio non demandé
+- Pas de paramètre envoyé à un moteur qui ne le supporte pas
 
 ## Moteurs supportés
 
 - **Chatterbox** (FR + multilangue)
 - **XTTS v2** (voice cloning, ref audio obligatoire)
 - **Piper** (offline rapide, voix à installer)
-- **Bark** (créatif, expérimental) - A venir
+- **Bark** (créatif, expérimental)
 
 L’UI est capability‑driven : seuls les paramètres supportés par le backend sont visibles et envoyés.
 Par exemple, les paramètres de référence vocale ou de segmentation ne sont affichés que pour les moteurs qui les supportent.
 
 ## À venir (roadmap)
 
-- **Bark** : intégration et stabilisation du backend + UI.
+- **Bark** : stabilisation (presets, perf CPU, prefetch optionnel).
 - **Assistant LLM** : aide à structurer le texte (titres, sections, pauses, proposition de chunks) avant génération, sans modifier le texte sans validation explicite de l’utilisateur.
+
+## Bark (installation)
+
+Installation venv isolé :
+
+```bash
+./scripts/install-bark-venv.sh
+```
+
+Alternative :
+
+```bash
+./scripts/bootstrap.sh bark
+```
+
+Paramètres exposés via `GET /v1/tts/engine_schema?engine=bark` :
+
+- `voice_preset`
+- `text_temp` (0..1)
+- `waveform_temp` (0..1)
+- `seed` (0 = aléatoire)
+- `device` (cpu)
+
+Notes :
+
+- Bark peut télécharger des poids au premier lancement (cache sous `./.assets/bark/`).
+- macOS : CPU uniquement (par design).
+- Si ça timeoute au premier run : export `VOCALIE_BARK_TIMEOUT_S=600` (ou `VOCALIE_BARK_SMALL_MODELS=1`).
+- Les poids sont pré-téléchargés lors de `./scripts/bootstrap.sh std` (ou `./scripts/install-bark-venv.sh`).
+- Si tu vois une erreur PyTorch `Weights only load failed` : réinstalle Bark (le venv) après mise à jour des deps (`torch<2.6` dans `requirements-bark.txt`).
 
 ## Pipeline de génération
 
@@ -436,6 +466,7 @@ Le backend appelle les moteurs via le Python de `.venvs/*` :
 - `scripts/status.sh` : affiche le statut des services + ports
 - `scripts/doctor.sh` : diagnostic dépendances/venvs (exit non‑zero si manquant)
 - `scripts/install-chatterbox-venv.sh` : crée le venv Chatterbox isolé
+- `scripts/install-bark-venv.sh` : crée le venv Bark isolé
 - `scripts/bootstrap.sh` : installation from scratch (min/std)
 - `scripts/lock-requirements.sh` : génère les lockfiles Python
 - `scripts/update-openapi.sh` : snapshot OpenAPI (contrat API)

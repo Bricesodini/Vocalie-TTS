@@ -57,7 +57,7 @@ MANIFESTS: Dict[str, BackendManifest] = {
     "bark": BackendManifest(
         engine_id="bark",
         python="python3.11",
-        pip_packages=["bark"],
+        pip_packages=["-r", "requirements-bark.txt"],
         system_hints=["ffmpeg (recommandé)"],
         import_probes=["bark"],
         post_install_checks=[["-c", "import bark; print('OK')"]],

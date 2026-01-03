@@ -10,6 +10,7 @@ usage() {
 Usage:
   ./scripts/bootstrap.sh min [--force]
   ./scripts/bootstrap.sh std [--force]
+  ./scripts/bootstrap.sh bark [--force]
   ./scripts/bootstrap.sh clean
 EOF
 }
@@ -90,6 +91,13 @@ install_std_engines() {
   deactivate || true
 }
 
+install_bark() {
+  # shellcheck disable=SC1091
+  source "$CORE_VENV/bin/activate"
+  python -c "from backend_install.installer import run_install; ok, logs = run_install('bark'); print('\\n'.join(logs)); raise SystemExit(0 if ok else 1)"
+  deactivate || true
+}
+
 clean_all() {
   echo "Removing $CORE_VENV and $ROOT_DIR/.venvs"
   rm -rf "$CORE_VENV" "$ROOT_DIR/.venvs"
@@ -119,6 +127,13 @@ case "$MODE" in
     install_core
     install_chatterbox
     install_std_engines
+    install_bark
+    run_smoke
+    ;;
+  bark)
+    require_python
+    install_core
+    install_bark
     run_smoke
     ;;
   clean)

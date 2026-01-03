@@ -53,6 +53,36 @@ def _run_xtts_prefetch(engine_id: str) -> Tuple[bool, str]:
     return True, output or "prefetch ok"
 
 
+def _run_bark_prefetch(engine_id: str) -> Tuple[bool, str]:
+    py = python_path(engine_id)
+    if not py.exists():
+        return False, "python introuvable dans le venv"
+    runner = ROOT / "tts_backends" / "bark_prefetch.py"
+    if not runner.exists():
+        return False, "runner bark_prefetch.py introuvable"
+    assets_dir = ROOT / ".assets" / "bark"
+    env = dict(**os.environ)
+    env["XDG_CACHE_HOME"] = str(assets_dir)
+    env["HF_HOME"] = str(assets_dir / ".hf")
+    env["HUGGINGFACE_HUB_CACHE"] = str(assets_dir / ".hf" / "hub")
+    env["SUNO_ENABLE_MPS"] = "False"
+    if env.get("VOCALIE_BARK_SMALL_MODELS") in {"1", "true", "True", "yes", "YES"}:
+        env["SUNO_USE_SMALL_MODELS"] = "True"
+    result = subprocess.run(
+        [str(py), str(runner)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    output = "\n".join(
+        [line for line in (result.stdout or "").splitlines() if line.strip()]
+        + [line for line in (result.stderr or "").splitlines() if line.strip()]
+    ).strip()
+    if result.returncode != 0:
+        return False, output or "prefetch failed"
+    return True, output or "prefetch ok"
+
+
 def run_install(engine_id: str) -> Tuple[bool, List[str]]:
     logs: List[str] = []
     manifest = get_manifest(engine_id)
@@ -82,6 +112,13 @@ def run_install(engine_id: str) -> Tuple[bool, List[str]]:
                 logs.append(_stamp("Poids XTTS OK (cache)."))
             else:
                 logs.append(_stamp(f"⚠️ Préchargement XTTS échoué: {output}"))
+        if engine_id == "bark":
+            logs.append(_stamp("Téléchargement des poids Bark..."))
+            ok, output = _run_bark_prefetch(engine_id)
+            if ok:
+                logs.append(_stamp("Poids Bark OK (cache)."))
+            else:
+                logs.append(_stamp(f"⚠️ Préchargement Bark échoué: {output}"))
         logs.append(_stamp("Installation terminée."))
         return True, logs
     except subprocess.CalledProcessError as exc:

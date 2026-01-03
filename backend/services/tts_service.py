@@ -157,6 +157,8 @@ def run_tts_job(
         chatterbox_mode = "fr_finetune"
     elif engine == "xtts_v2":
         backend_id = "xtts"
+    if backend_id == "bark":
+        direction_enabled = False
 
     backend = get_backend(backend_id)
     if backend is None:

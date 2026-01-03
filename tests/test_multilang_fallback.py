@@ -1,5 +1,5 @@
-import torch
 import pytest
+torch = pytest.importorskip("torch")
 
 pytest.importorskip("chatterbox")
 

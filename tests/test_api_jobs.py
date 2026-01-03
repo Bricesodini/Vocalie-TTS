@@ -84,3 +84,55 @@ def test_job_lifecycle(api_client, monkeypatch, tmp_path):
     asset_resp = api_client.get(f"/v1/assets/{asset_id}")
     assert asset_resp.status_code == 200
     assert asset_resp.headers["content-type"].startswith("audio/")
+
+
+def test_job_accepts_bark_without_voice(api_client, monkeypatch, tmp_path):
+    output_dir = tmp_path / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    def fake_run_tts_job(
+        *,
+        job_id,
+        text,
+        engine,
+        voice,
+        model,
+        language,
+        direction_enabled,
+        direction_marker,
+        options,
+        export,
+        editing,
+        progress_cb,
+    ):
+        progress_cb(1.0)
+        path = output_dir / "fake_bark.wav"
+        sr = 24000
+        tone = np.zeros(sr // 10, dtype=np.float32)
+        sf.write(str(path), tone, sr)
+        return {
+            "output_path": path,
+            "edited_path": None,
+            "session_dir": tmp_path / "work",
+            "engine": engine,
+            "voice": voice,
+            "model": model,
+            "duration_s": 0.1,
+            "sample_rate": sr,
+            "size_bytes": int(path.stat().st_size),
+            "created_at": datetime.now(timezone.utc),
+            "job_id": job_id,
+        }
+
+    monkeypatch.setattr(job_service, "run_tts_job", fake_run_tts_job)
+
+    resp = api_client.post(
+        "/v1/tts/jobs",
+        json={
+            "text": "Hello",
+            "engine": "bark",
+            "direction": {"enabled": False},
+            "options": {"voice_preset": "v2/en_speaker_6"},
+        },
+    )
+    assert resp.status_code == 200

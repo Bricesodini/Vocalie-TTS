@@ -68,3 +68,39 @@ def test_xtts_installer_prefetch_calls_runner(monkeypatch, tmp_path):
     ok, _logs = installer.run_install("xtts")
     assert ok is True
     assert any("xtts_prefetch.py" in " ".join(call) for call in calls)
+
+
+def test_bark_installer_prefetch_calls_runner(monkeypatch, tmp_path):
+    calls = []
+
+    monkeypatch.setattr(installer, "create_venv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(installer, "pip_install", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        installer,
+        "get_manifest",
+        lambda _eid: type(
+            "M",
+            (),
+            {
+                "python": "python3.11",
+                "pip_packages": ["pkg"],
+                "engine_id": "bark",
+                "post_install_checks": [],
+            },
+        )(),
+    )
+    monkeypatch.setattr(installer, "python_path", lambda _eid: tmp_path / "bin" / "python")
+    monkeypatch.setattr(installer, "ROOT", tmp_path)
+    (tmp_path / "bin").mkdir(parents=True)
+    (tmp_path / "bin" / "python").write_text("", encoding="utf-8")
+    (tmp_path / "tts_backends").mkdir(parents=True)
+    (tmp_path / "tts_backends" / "bark_prefetch.py").write_text("print('ok')", encoding="utf-8")
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        return type("R", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(installer.subprocess, "run", fake_run)
+    ok, _logs = installer.run_install("bark")
+    assert ok is True
+    assert any("bark_prefetch.py" in " ".join(call) for call in calls)

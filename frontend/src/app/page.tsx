@@ -177,12 +177,18 @@ export default function Home() {
     return Boolean(engine?.supports_ref);
   }, [engines, uiState.engine.engine_id]);
 
+  const engineAvailable = useMemo(() => {
+    const engine = engines.find((item) => item.id === uiState.engine.engine_id);
+    return Boolean(engine?.available);
+  }, [engines, uiState.engine.engine_id]);
+
   const canGenerate = useMemo(() => {
     if (!uiState.engine.engine_id) return false;
+    if (!engineAvailable) return false;
     if (!uiState.preparation.text_raw.trim()) return false;
     if (supportsRef && !uiState.engine.voice_id) return false;
     return !isGenerating;
-  }, [uiState, supportsRef, isGenerating]);
+  }, [uiState, supportsRef, engineAvailable, isGenerating]);
 
   const engineFieldList = engineFields(engineSchema?.fields ?? []);
   const postFieldList = postFields(engineSchema?.fields ?? []);
@@ -192,13 +198,13 @@ export default function Home() {
     async function loadEngines() {
       try {
         const data = await apiGet<EnginesResponse>("/v1/tts/engines");
-        const available = data.engines.filter((engine) => engine.available);
         if (!active) return;
-        setEngines(available);
-        if (!uiState.engine.engine_id && available.length > 0) {
+        setEngines(data.engines);
+        if (!uiState.engine.engine_id && data.engines.length > 0) {
+          const firstAvailable = data.engines.find((engine) => engine.available) ?? data.engines[0];
           setUiState((prev) => ({
             ...prev,
-            engine: { ...prev.engine, engine_id: available[0].id },
+            engine: { ...prev.engine, engine_id: firstAvailable.id },
           }));
         }
       } catch (err) {
@@ -535,6 +541,12 @@ export default function Home() {
           </div>
         )}
 
+        {!engineAvailable && uiState.engine.engine_id && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+            Moteur indisponible: {uiState.engine.engine_id}. Installe-le via `./scripts/bootstrap.sh std` ou `./scripts/bootstrap.sh bark`.
+          </div>
+        )}
+
         <Card>
           <CardHeader>
             <CardTitle>Presets</CardTitle>
@@ -717,8 +729,8 @@ export default function Home() {
                   </SelectTrigger>
                   <SelectContent>
                     {engines.map((engine) => (
-                      <SelectItem key={engine.id} value={engine.id}>
-                        {engine.label}
+                      <SelectItem key={engine.id} value={engine.id} disabled={!engine.available}>
+                        {engine.label}{engine.available ? "" : " (indisponible)"}
                       </SelectItem>
                     ))}
                   </SelectContent>

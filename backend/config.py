@@ -34,6 +34,9 @@ VOCALIE_CORS_ORIGINS = _parse_csv_env("VOCALIE_CORS_ORIGINS", DEFAULT_CORS_ORIGI
 VOCALIE_RATE_LIMIT_RPS = float(os.environ.get("VOCALIE_RATE_LIMIT_RPS") or "5")
 VOCALIE_RATE_LIMIT_BURST = int(os.environ.get("VOCALIE_RATE_LIMIT_BURST") or "10")
 
+VOCALIE_BARK_TIMEOUT_S = float(os.environ.get("VOCALIE_BARK_TIMEOUT_S") or "600")
+VOCALIE_BARK_SMALL_MODELS = os.environ.get("VOCALIE_BARK_SMALL_MODELS") in {"1", "true", "True", "yes", "YES"}
+
 work_env = os.environ.get("VOCALIE_WORK_DIR")
 WORK_DIR = Path(work_env).expanduser() if work_env else BASE_DIR / "work"
 WORK_DIR.mkdir(parents=True, exist_ok=True)
