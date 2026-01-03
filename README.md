@@ -191,7 +191,12 @@ Gradio est utile pendant le développement, l’intégration de nouveaux moteurs
 
 ### Node lockfile sur Linux (CI)
 
-Certaines dépendances frontend (ex: `lightningcss`, `@tailwindcss/oxide`) s’appuient sur des binaires natifs. Si le `package-lock.json` est généré sur macOS, le build CI Linux peut échouer.
+Certaines dépendances frontend (ex: `lightningcss`, `@tailwindcss/oxide`) s’appuient sur des binaires natifs.
+
+**Choix de design (strict)** :
+- La CI frontend est volontairement stricte et n’exécute que `npm ci`.
+- Si les binaires natifs Linux ne sont pas présents après `npm ci`, la CI échoue avec un message explicite.
+- Aucun “auto-fix” (pas de `npm install`, pas de suppression de lockfile) : le lockfile est la source de vérité.
 
 - Régénérer le lockfile côté Linux (Docker) :
   - `docker run --rm -v "$PWD/frontend:/app" -w /app node:20-bookworm bash -lc "rm -rf node_modules package-lock.json && npm install --include=optional --no-audit --progress=false"`

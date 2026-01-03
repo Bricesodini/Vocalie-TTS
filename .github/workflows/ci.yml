@@ -33,27 +33,41 @@ jobs:
           node-version: "20"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Install deps + verify native bindings (Linux)
-        run: |
-          npm install --include=optional --prefer-offline --no-audit --progress=false
-
-          set +e
-          node -e "require('lightningcss'); console.log('lightningcss ok')" >/dev/null 2>&1
-          LIGHTNING_OK=$?
-          node -e "require('@tailwindcss/oxide'); console.log('tailwindcss oxide ok')" >/dev/null 2>&1
-          OXIDE_OK=$?
-          set -e
-
-          if [ "$LIGHTNING_OK" -ne 0 ] || [ "$OXIDE_OK" -ne 0 ]; then
-            echo "Native deps missing; retrying with fresh install (known npm optional-deps issue)."
-            rm -rf node_modules package-lock.json
-            npm install --include=optional --prefer-offline --no-audit --progress=false
-          fi
-
-          node -e "require('lightningcss'); console.log('lightningcss ok')"
-          node -e "require('@tailwindcss/oxide'); console.log('tailwindcss oxide ok')"
+      - name: Install deps (lockfile strict)
+        run: npm ci --prefer-offline --no-audit --progress=false
       - name: Lint
         run: npm run lint
+      - name: Check lockfile is cross-platform (Linux native deps)
+        if: runner.os == 'Linux'
+        run: |
+          node - <<'NODE'
+          const checks = [
+            { name: "lightningcss", requireId: "lightningcss" },
+            { name: "@tailwindcss/oxide", requireId: "@tailwindcss/oxide" },
+            { name: "@tailwindcss/oxide-linux-x64-gnu", requireResolve: "@tailwindcss/oxide-linux-x64-gnu" },
+          ];
+
+          const failures = [];
+          for (const check of checks) {
+            try {
+              if (check.requireId) require(check.requireId);
+              if (check.requireResolve) require.resolve(check.requireResolve);
+            } catch (err) {
+              failures.push({ check: check.name, error: String(err && err.message ? err.message : err) });
+            }
+          }
+
+          if (failures.length) {
+            console.error("❌ package-lock.json is platform-specific (likely generated on macOS).");
+            console.error("This CI is intentionally strict: it runs `npm ci` only and will not auto-repair native deps.");
+            console.error("Missing Linux native dependencies detected after `npm ci`:");
+            for (const f of failures) console.error(`- ${f.check}: ${f.error}`);
+            console.error("");
+            console.error("Fix: regenerate `frontend/package-lock.json` from a Linux environment (Docker is fine), then commit it.");
+            process.exit(1);
+          }
+          console.log("✅ Lockfile looks cross-platform for Linux native deps.");
+          NODE
       - name: Build
         run: npm run build
         env:
