@@ -189,6 +189,13 @@ Gradio est utile pendant le développement, l’intégration de nouveaux moteurs
 - CI : préférer `pip install -r requirements.lock.txt`.
 - Node : `npm ci` (lock déjà fourni via `package-lock.json`).
 
+### Node lockfile sur Linux (CI)
+
+Certaines dépendances frontend (ex: `lightningcss`, `@tailwindcss/oxide`) s’appuient sur des binaires natifs. Si le `package-lock.json` est généré sur macOS, le build CI Linux peut échouer.
+
+- Régénérer le lockfile côté Linux (Docker) :
+  - `docker run --rm -v "$PWD/frontend:/app" -w /app node:20-bookworm bash -lc "rm -rf node_modules package-lock.json && npm install --include=optional --no-audit --progress=false"`
+
 ## API endpoints (v1)
 
 ### Presets
