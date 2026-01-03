@@ -43,6 +43,10 @@ jobs:
           node -e "require('fs').accessSync('node_modules/lightningcss/lightningcss.linux-x64-gnu.node')" \
             || npm i --no-save lightningcss-linux-x64-gnu
           node -e "require('lightningcss'); console.log('lightningcss ok')"
+          npm rebuild @tailwindcss/oxide --verbose || true
+          node -e "require.resolve('@tailwindcss/oxide-linux-x64-gnu')" \
+            || npm i --no-save @tailwindcss/oxide-linux-x64-gnu
+          node -e "require('@tailwindcss/oxide'); console.log('tailwindcss oxide ok')"
       - name: Lint
         run: npm run lint
       - name: Build
@@ -50,3 +54,4 @@ jobs:
         env:
           NEXT_DISABLE_TURBOPACK: "1"
           NEXT_TELEMETRY_DISABLED: "1"
+          TURBOPACK: "0"
