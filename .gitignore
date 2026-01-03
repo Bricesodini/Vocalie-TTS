@@ -5,8 +5,14 @@ __pycache__/
 *.pyc
 .DS_Store
 .env
+.env.*
+!.env.example
 node_modules/
 .next/
+.npmrc
+.pnp.cjs
+.pnp.loader.mjs
+.yarn/
 
 # Local app artifacts
 output/

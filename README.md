@@ -26,10 +26,18 @@ Objectifs :
 ## Stack actuelle (résumé)
 
 - UI Gradio locale (macOS friendly)
+- Backend API : FastAPI + Pydantic + pytest
+- Frontend : Next.js (React) + Tailwind CSS + shadcn/ui (Radix UI)
 - moteurs : Chatterbox, XTTS v2, Piper, Bark
 - chunking **manuel** via marqueur `[[CHUNK]]` (mode Direction)
 - montage inter‑chunk optionnel (silence) pour Chatterbox
 - édition minimale **optionnelle** : trim début/fin + normalisation
+
+## Licence
+
+- Code de ce dépôt : MIT (voir `LICENSE`).
+- Dépendances (Python/Node) : conservent leurs licences respectives.
+- Modèles/poids et contenus téléchargés (ex: Bark / XTTS / Chatterbox / Piper) : soumis aux licences/conditions des projets upstream et/ou des fichiers distribués (ex: Hugging Face). Vous êtes responsable de vérifier ces licences avant redistribution ou usage commercial.
 
 ## Principe fondamental
 
