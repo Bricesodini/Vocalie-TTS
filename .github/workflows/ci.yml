@@ -35,8 +35,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install deps
         run: |
-          npm config set optional true
-          npm ci --prefer-offline --no-audit --progress=false
+          npm ci --include=optional --prefer-offline --no-audit --progress=false
       - name: Ensure lightningcss native binding (Linux)
         if: runner.os == 'Linux'
         run: |
