@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from backend.config import OUTPUT_DIR
+from backend.config import MAX_CONCURRENT_JOBS, OUTPUT_DIR
 from backend.services import asset_service
 from backend.services.tts_service import run_tts_job
 
@@ -17,6 +17,20 @@ class JobStore:
         self._jobs: Dict[str, Dict[str, Any]] = {}
 
     def create_job(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            active = sum(1 for job in self._jobs.values() if job.get("status") in {"queued", "running"})
+            if active >= MAX_CONCURRENT_JOBS:
+                return {
+                    "job_id": "",
+                    "status": "rejected",
+                    "progress": 0.0,
+                    "created_at": datetime.now(timezone.utc),
+                    "started_at": None,
+                    "finished_at": datetime.now(timezone.utc),
+                    "asset_id": None,
+                    "error": "too_many_concurrent_jobs",
+                    "cancel_requested": False,
+                }
         job_id = f"job_{uuid.uuid4().hex}"
         now = datetime.now(timezone.utc)
         job = {

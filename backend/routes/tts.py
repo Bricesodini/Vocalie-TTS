@@ -4,6 +4,8 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from backend.config import MAX_TEXT_CHARS
+from backend.rate_limit import enforce_heavy
 from backend.schemas.models import (
     EngineSchemaField,
     EngineSchemaResponse,
@@ -173,7 +175,8 @@ def list_models(engine: str = Query(...)) -> ModelsResponse:
 
 
 @router.post("/tts/jobs", response_model=JobCreateResponse)
-def create_job(request: TTSJobRequest) -> JobCreateResponse:
+def create_job(http_request: Request, request: TTSJobRequest) -> JobCreateResponse:
+    enforce_heavy(http_request)
     engine_id = request.engine_id or request.engine
     if not engine_id:
         raise HTTPException(status_code=400, detail="engine_required")
@@ -244,6 +247,9 @@ def create_job(request: TTSJobRequest) -> JobCreateResponse:
         if direction_marker in snapshot_text:
             direction_enabled = True
 
+    if len(text or "") > MAX_TEXT_CHARS:
+        raise HTTPException(status_code=413, detail="text_too_large")
+
     editing_payload = request.editing.dict() if request.editing else {}
     if request.edit_params:
         editing_payload = dict(request.edit_params)
@@ -263,4 +269,6 @@ def create_job(request: TTSJobRequest) -> JobCreateResponse:
         "editing": editing_payload or {"enabled": False},
     }
     job = JOB_STORE.create_job(payload)
+    if job.get("status") == "rejected":
+        raise HTTPException(status_code=429, detail=job.get("error") or "rate_limited")
     return JobCreateResponse(job_id=job["job_id"], status=job["status"])

@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from backend.config import PRESETS_DIR
 from backend.schemas.models import UIState
 from pydantic import ValidationError
+from backend.security import safe_filename
 
 
 PRESET_SUFFIX = ".json"
@@ -18,7 +19,7 @@ def _utc_now() -> datetime:
 
 
 def _preset_path(preset_id: str) -> Path:
-    safe_id = str(preset_id).strip()
+    safe_id = safe_filename(str(preset_id))
     return PRESETS_DIR / f"{safe_id}{PRESET_SUFFIX}"
 
 

@@ -99,7 +99,14 @@ def resolve_ref_path(
     """Return the absolute path to *filename* inside the reference directory."""
 
     ref_dir = _get_ref_dir(directory)
-    candidate = ref_dir / filename
+    candidate_name = Path(str(filename)).name
+    if candidate_name != str(filename) or ".." in candidate_name:
+        raise ValueError("invalid_reference_name")
+    candidate = (ref_dir / candidate_name).resolve()
+    try:
+        candidate.relative_to(ref_dir.resolve())
+    except ValueError as exc:
+        raise ValueError("reference_path_not_allowed") from exc
     if not candidate.exists():
         raise FileNotFoundError(f"Reference file not found: {candidate}")
     return str(candidate)

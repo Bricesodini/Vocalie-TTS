@@ -1,11 +1,22 @@
 # 🎙️ Vocalie-TTS
 
+## How to read this README
+
+- [Quickstart (try it fast)](#quickstart-api--frontend)
+- [Architecture & principles](#présentation)
+- [API usage](#api-endpoints-v1)
+- [Installation from scratch](#installation-from-scratch)
+- [Security model](#sécurité-perso-first)
+- [Contributing / extending](#scripts-optionnel)
+
 ## Présentation
 
 Vocalie-TTS est une interface locale pour produire des voix off en français avec un pipeline simple, stable et reproductible.
 Le cœur du produit est la génération TTS ; l’édition audio avancée a été supprimée pour éviter les comportements implicites.
 
-Objectifs V2 :
+**L’API est la source de vérité de l’application.** Le Frontend (Next.js) et Gradio sont tous deux des clients de l’API. Gradio ne constitue pas l’interface de production mais sert de cockpit ou d’outil de debug pour explorer et contrôler le backend.
+
+Objectifs :
 
 - génération fiable (multi-moteurs),
 - chunking explicite et déterministe (aucun découpage automatique implicite),
@@ -20,21 +31,15 @@ Objectifs V2 :
 - montage inter‑chunk optionnel (silence) pour Chatterbox
 - édition minimale **optionnelle** : trim début/fin + normalisation
 
-## Principe fondamental (V2)
+## Principe fondamental
 
-Vocalie‑TTS V2 repose sur un principe simple : **aucun comportement implicite**.
+Vocalie‑TTS repose sur un principe simple : **aucun comportement implicite**.
 
 - Aucun découpage automatique caché
 - Aucun post‑traitement audio non demandé
 - Aucun paramètre envoyé à un moteur qui ne le supporte pas
 
 Tout ce qui influence le rendu audio est **visible, explicite et traçable** par l’utilisateur.
-
-- UI Gradio locale (macOS friendly)
-- moteurs : Chatterbox, XTTS v2, Piper, Bark
-- chunking **manuel** via marqueur `[[CHUNK]]` (mode Direction)
-- montage inter‑chunk optionnel (silence) pour Chatterbox
-- édition minimale **optionnelle** : trim début/fin + normalisation
 
 ## Moteurs supportés
 
@@ -46,7 +51,12 @@ Tout ce qui influence le rendu audio est **visible, explicite et traçable** par
 L’UI est capability‑driven : seuls les paramètres supportés par le backend sont visibles et envoyés.
 Par exemple, les paramètres de référence vocale ou de segmentation ne sont affichés que pour les moteurs qui les supportent.
 
-## Pipeline de génération (V2)
+## À venir (roadmap)
+
+- **Bark** : intégration et stabilisation du backend + UI.
+- **Assistant LLM** : aide à structurer le texte (titres, sections, pauses, proposition de chunks) avant génération, sans modifier le texte sans validation explicite de l’utilisateur.
+
+## Pipeline de génération
 
 1. Texte → normalisation + lexique FR (si auto‑ajustement activé)
 2. Chunking **manuel** (Mode Direction) :
@@ -100,6 +110,8 @@ Installez ffmpeg via votre gestionnaire système (ex: macOS `brew install ffmpeg
 2. Démarrer le frontend
 3. (Optionnel) Démarrer le cockpit Gradio
 
+> ⚠️ **Le cockpit Gradio n’est jamais requis pour l’utilisation normale.**
+
 Le cockpit Gradio est un **outil d’exploration et de contrôle**, il ne fait pas partie du chemin critique de production.
 
 ## Quickstart (API + Frontend)
@@ -114,6 +126,31 @@ pip install -U pip
 pip install -r requirements.txt
 uvicorn backend.app:app --reload --port 8000
 ```
+
+### Sécurité (LAN)
+
+- Par défaut, l’API doit rester en local (`--host 127.0.0.1`).
+- Pour une exposition LAN volontaire, définissez `VOCALIE_API_KEY` et envoyez `Authorization: Bearer <token>` (ou `X-API-Key: <token>`).
+- Si `VOCALIE_API_KEY` n’est pas défini : toute requête non-locale est refusée (403), même si vous lancez `0.0.0.0`.
+
+### Sécurité (perso-first)
+
+**⚠️ Disclaimer :**
+**Ce service n’est pas conçu pour être exposé sur Internet.**
+**Il est destiné à un usage local ou sur réseau local (LAN) uniquement, sauf si vous le renforcez spécifiquement.**
+
+- Ne pas exposer sur Internet (HTTP local uniquement).
+- CORS strict (whitelist) : configurez `VOCALIE_CORS_ORIGINS` (CSV). `*` n’est pas supporté.
+- Rate limit soft (endpoints lourds) :
+  - `VOCALIE_RATE_LIMIT_RPS` (défaut 5)
+  - `VOCALIE_RATE_LIMIT_BURST` (défaut 10)
+  - appliqué à `POST /v1/tts/jobs` et `POST /v1/audio/edit` (pas à `/v1/health`).
+
+## Rôle de Gradio
+
+Gradio existe comme cockpit d’exploration et de debug pour l’API backend. Il permet de tester rapidement les fonctionnalités, d’inspecter les retours de l’API et de contrôler les moteurs TTS sans passer par l’interface utilisateur de production (Frontend Next.js).
+
+Gradio est utile pendant le développement, l’intégration de nouveaux moteurs ou pour du prototypage rapide. Il peut être retiré entièrement en production : tout usage normal passe par l’API et le frontend.
 
 ## Reproductibilité (lockfiles)
 
@@ -346,6 +383,8 @@ Le backend appelle les moteurs via le Python de `.venvs/*` :
 - Piper : `tts_backends/piper_backend.py` appelle `backend_install.paths.python_path(\"piper\")`
   puis lance `tts_backends/piper_runner.py` via subprocess.
 
+> **Rationale** : L’utilisation de subprocess et d’environnements Python isolés (venvs) garantit la stabilité, évite les conflits de dépendances entre moteurs et assure la reproductibilité des exécutions.
+
 ## Smoke tests moteurs
 
 - Chatterbox (si venv installé) :
@@ -432,4 +471,10 @@ Frontend :
 ---
 
 Pour toute demande de modification, gardez la règle d’or :
-**si le bénéfice n’est pas immédiatement audible, la fonctionnalité n’a pas sa place en V2.**
+**si le bénéfice n’est pas immédiatement audible, la fonctionnalité n’a pas sa place.**
+
+## Design philosophy
+
+- Explicite plutôt qu’implicite
+- API-first
+- Aucun ajout de fonctionnalité sans bénéfice audible

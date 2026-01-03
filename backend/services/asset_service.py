@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from backend.config import ASSETS_META_DIR, OUTPUT_DIR
+from backend.security import safe_filename
 
 
 META_SUFFIX = ".json"
@@ -16,7 +17,7 @@ def _utc_now() -> datetime:
 
 
 def _meta_path(asset_id: str) -> Path:
-    safe_id = str(asset_id)
+    safe_id = safe_filename(str(asset_id))
     return ASSETS_META_DIR / f"{safe_id}{META_SUFFIX}"
 
 

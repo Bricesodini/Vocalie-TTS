@@ -4,11 +4,16 @@
 __pycache__/
 *.pyc
 .DS_Store
+.env
+node_modules/
+.next/
 
 # Local app artifacts
 output/
 Ref_audio/
+work/
 .state/
 presets/
 .assets/
 .DS_Store
+*.wav

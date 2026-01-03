@@ -4,11 +4,12 @@ import math
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from audio_defaults import SILENCE_MIN_MS, SILENCE_THRESHOLD
 import backend.config as backend_config
 from backend.schemas.models import AudioEditRequest, AudioEditResponse
+from backend.rate_limit import enforce_heavy
 from backend.services import asset_service
 from backend.services.tts_service import _apply_minimal_edit, _audio_meta
 from output_paths import ensure_unique_path
@@ -36,7 +37,8 @@ def _peak_dbfs(peak: float) -> float:
 
 
 @router.post("/audio/edit", response_model=AudioEditResponse)
-def edit_audio(request: AudioEditRequest) -> AudioEditResponse:
+def edit_audio(http_request: Request, request: AudioEditRequest) -> AudioEditResponse:
+    enforce_heavy(http_request)
     input_path = None
     if request.input_wav_path:
         input_path = _resolve_safe_path(request.input_wav_path)

@@ -7,6 +7,33 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parents[1]
 API_VERSION = "v1"
 
+MAX_TEXT_CHARS = int(os.environ.get("VOCALIE_MAX_TEXT_CHARS") or "50000")
+MAX_CONCURRENT_JOBS = int(os.environ.get("VOCALIE_MAX_CONCURRENT_JOBS") or "2")
+
+
+def _parse_csv_env(name: str, default: list[str]) -> list[str]:
+    raw = os.environ.get(name)
+    if raw is None:
+        return list(default)
+    value = raw.strip()
+    if not value:
+        return []
+    items = [part.strip() for part in value.split(",")]
+    return [item for item in items if item]
+
+
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:7860",
+    "http://127.0.0.1:7860",
+]
+
+VOCALIE_CORS_ORIGINS = _parse_csv_env("VOCALIE_CORS_ORIGINS", DEFAULT_CORS_ORIGINS)
+
+VOCALIE_RATE_LIMIT_RPS = float(os.environ.get("VOCALIE_RATE_LIMIT_RPS") or "5")
+VOCALIE_RATE_LIMIT_BURST = int(os.environ.get("VOCALIE_RATE_LIMIT_BURST") or "10")
+
 work_env = os.environ.get("VOCALIE_WORK_DIR")
 WORK_DIR = Path(work_env).expanduser() if work_env else BASE_DIR / "work"
 WORK_DIR.mkdir(parents=True, exist_ok=True)
