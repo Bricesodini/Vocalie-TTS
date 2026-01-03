@@ -64,7 +64,7 @@ jobs:
             for (const f of failures) console.error(`- ${f.check}: ${f.error}`);
             console.error("");
             console.error("Fix: regenerate `frontend/package-lock.json` from a Linux environment (Docker is fine), then commit it.");
-            console.error("Hint: `bash scripts/gen-lock-linux.sh` (runs Linux Docker + validates `npm ci && npm run build`).");
+            console.error("Hint: run from repo root: `bash ./scripts/gen-lock-linux.sh` (runs Linux Docker + validates `npm ci && npm run build`).");
             process.exit(1);
           }
           console.log("✅ Lockfile looks cross-platform for Linux native deps.");

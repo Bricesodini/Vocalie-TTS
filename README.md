@@ -200,7 +200,7 @@ Certaines dépendances frontend (ex: `lightningcss`, `@tailwindcss/oxide`) s’a
 
 - Régénérer le lockfile côté Linux (Docker) :
   - `docker run --rm -v "$PWD/frontend:/app" -w /app node:20-bookworm bash -lc "rm -rf node_modules package-lock.json && npm install --include=optional --no-audit --progress=false"`
-  - ou via script : `bash scripts/gen-lock-linux.sh`
+  - ou via script (depuis la racine du repo) : `bash ./scripts/gen-lock-linux.sh`
 
 ## API endpoints (v1)
 
