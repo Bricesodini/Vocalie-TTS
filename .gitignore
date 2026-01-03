@@ -1,0 +1,29 @@
+# Python / virtualenv
+.venv/
+.venvs/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+.npmrc
+.pnp.cjs
+.pnp.loader.mjs
+.yarn/
+
+# Local app artifacts
+output/
+work/
+.state/
+.assets/
+*.wav
+
+# Keep folder structure, ignore local content
+Ref_audio/*
+!Ref_audio/.gitkeep
+presets/*
+!presets/.gitkeep
+!presets/example.json

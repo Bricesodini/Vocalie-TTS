@@ -1,0 +1,10 @@
+# Runtime dependencies (API + cockpit Gradio)
+gradio~=5.9.0
+librosa
+soundfile
+huggingface_hub
+safetensors
+fastapi~=0.115.6
+uvicorn[standard]~=0.30.6
+pydantic~=2.11.2
+httpx~=0.27.2
