@@ -57,6 +57,30 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   return (await resp.json()) as T;
 }
 
+export async function apiPut<T>(path: string, body: unknown): Promise<T> {
+  const resp = await fetch(buildUrl(path), {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(text || `${resp.status} ${resp.statusText}`);
+  }
+  return (await resp.json()) as T;
+}
+
+export async function apiDelete<T>(path: string): Promise<T> {
+  const resp = await fetch(buildUrl(path), { method: "DELETE" });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(text || `${resp.status} ${resp.statusText}`);
+  }
+  return (await resp.json()) as T;
+}
+
 export class MissingEngineIdError extends Error {
   constructor() {
     super("engine_id_required");

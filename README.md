@@ -82,6 +82,7 @@ Le dossier `work/` est nettoyé au démarrage (sauf `VOCALIE_KEEP_WORK=1`).
 ## Prérequis
 
 - macOS (Apple Silicon recommandé)
+- macOS Intel : support best effort
 - Python 3.11
 - Node.js >= 20
 - **ffmpeg** (recommandé, requis pour XTTS si la référence n’est pas en WAV)
@@ -112,6 +113,75 @@ source .venv/bin/activate
 pip install -U pip
 pip install -r requirements.txt
 uvicorn backend.app:app --reload --port 8000
+```
+
+## Reproductibilité (lockfiles)
+
+- Python : `requirements.lock.txt` + `requirements-chatterbox.lock.txt` (générés via `./scripts/lock-requirements.sh`)
+- Bootstrap utilise les lockfiles si présents.
+- CI : préférer `pip install -r requirements.lock.txt`.
+- Node : `npm ci` (lock déjà fourni via `package-lock.json`).
+
+## API endpoints (v1)
+
+### Presets
+
+```bash
+curl -s http://localhost:8000/v1/presets
+
+curl -s http://localhost:8000/v1/presets/default
+
+curl -sX POST http://localhost:8000/v1/presets \\
+  -H 'Content-Type: application/json' \\
+  -d '{\"id\":\"demo\",\"label\":\"Demo\",\"state\":{\"preparation\":{\"text_raw\":\"Bonjour\"},\"engine\":{\"engine_id\":\"piper\",\"params\":{}}}}'
+
+curl -sX PUT http://localhost:8000/v1/presets/demo \\
+  -H 'Content-Type: application/json' \\
+  -d '{\"label\":\"Demo v2\",\"state\":{\"preparation\":{\"text_raw\":\"Salut\"},\"engine\":{\"engine_id\":\"piper\",\"params\":{}}}}'
+
+curl -sX DELETE http://localhost:8000/v1/presets/demo
+```
+
+### Preparation
+
+```bash
+curl -sX POST http://localhost:8000/v1/prep/adjust \\
+  -H 'Content-Type: application/json' \\
+  -d '{\"text_raw\":\"Bonjour  monde\"}'
+
+curl -sX POST http://localhost:8000/v1/prep/interpret \\
+  -H 'Content-Type: application/json' \\
+  -d '{\"text_adjusted\":\"Bonjour monde\",\"glossary_enabled\":false}'
+```
+
+### Direction / Chunking
+
+```bash
+curl -sX POST http://localhost:8000/v1/chunks/snapshot \\
+  -H 'Content-Type: application/json' \\
+  -d '{\"text_interpreted\":\"Bonjour le monde\"}'
+
+curl -sX POST http://localhost:8000/v1/chunks/apply_marker \\
+  -H 'Content-Type: application/json' \\
+  -d '{\"snapshot_text\":\"Bonjour le monde\",\"action\":\"insert\",\"position\":7}'
+
+curl -sX POST http://localhost:8000/v1/chunks/preview \\
+  -H 'Content-Type: application/json' \\
+  -d '{\"snapshot_text\":\"Bonjour [[CHUNK]] le monde\"}'
+```
+
+### Engine schema
+
+```bash
+curl -s \"http://localhost:8000/v1/tts/engine_schema?engine=chatterbox_native\"
+```
+
+### Audio edit
+
+```bash
+curl -sX POST http://localhost:8000/v1/audio/edit \\
+  -H 'Content-Type: application/json' \\
+  -d '{\"asset_id\":\"asset_xxx\",\"trim_enabled\":true,\"normalize_enabled\":true,\"target_dbfs\":-1.0}'
 ```
 
 ## Installation from scratch
@@ -322,11 +392,20 @@ Le backend appelle les moteurs via le Python de `.venvs/*` :
 
 - `scripts/dev-backend.sh` : lance l’API (active la venv si présente)
 - `scripts/dev-frontend.sh` : lance le frontend
-- `scripts/dev.sh` : lance backend + frontend (frontend au premier plan)
+- `scripts/dev.sh` : lance backend + frontend (+ cockpit si `WITH_COCKPIT=1`)
+- `scripts/stop.sh` : stoppe les services lancés par `dev.sh`
+- `scripts/status.sh` : affiche le statut des services + ports
 - `scripts/doctor.sh` : diagnostic dépendances/venvs (exit non‑zero si manquant)
 - `scripts/install-chatterbox-venv.sh` : crée le venv Chatterbox isolé
 - `scripts/bootstrap.sh` : installation from scratch (min/std)
+- `scripts/lock-requirements.sh` : génère les lockfiles Python
+- `scripts/update-openapi.sh` : snapshot OpenAPI (contrat API)
 - `scripts/smoke.sh` : smoke tests API
+
+## Contrat API (OpenAPI)
+
+- Snapshot versionné : `openapi.json`
+- Mettre à jour après changement d’API : `./scripts/update-openapi.sh`
 
 ## Smoke tests (validation rapide)
 

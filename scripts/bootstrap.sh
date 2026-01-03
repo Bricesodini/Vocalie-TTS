@@ -34,6 +34,7 @@ require_python() {
 
 install_core() {
   local created=0
+  local lockfile="$ROOT_DIR/requirements.lock.txt"
   if [[ ! -d "$CORE_VENV" ]]; then
     echo "Creating core venv at $CORE_VENV"
     python3.11 -m venv "$CORE_VENV"
@@ -44,7 +45,11 @@ install_core() {
   python -m pip install -U pip
   if [[ "$created" -eq 1 || "$FORCE" -eq 1 ]]; then
     echo "Installing core requirements"
-    pip install -r "$ROOT_DIR/requirements.txt"
+    if [[ -f "$lockfile" ]]; then
+      pip install -r "$lockfile"
+    else
+      pip install -r "$ROOT_DIR/requirements.txt"
+    fi
   else
     echo "Core venv exists; skipping requirements install (use --force to reinstall)."
   fi
@@ -53,6 +58,7 @@ install_core() {
 
 install_chatterbox() {
   local created=0
+  local lockfile="$ROOT_DIR/requirements-chatterbox.lock.txt"
   if [[ ! -d "$CHATTERBOX_VENV" ]]; then
     echo "Creating Chatterbox venv at $CHATTERBOX_VENV"
     python3.11 -m venv "$CHATTERBOX_VENV"
@@ -65,7 +71,11 @@ install_chatterbox() {
     pip install -U pip setuptools wheel
     export PIP_NO_BUILD_ISOLATION=1
     pip install "numpy<1.26,>=1.24"
-    pip install -r "$ROOT_DIR/requirements-chatterbox.txt"
+    if [[ -f "$lockfile" ]]; then
+      pip install -r "$lockfile"
+    else
+      pip install -r "$ROOT_DIR/requirements-chatterbox.txt"
+    fi
   else
     echo "Chatterbox venv exists; skipping install (use --force to reinstall)."
   fi

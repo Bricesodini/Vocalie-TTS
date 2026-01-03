@@ -5,6 +5,8 @@ import logging
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from backend.schemas.models import (
+    EngineSchemaField,
+    EngineSchemaResponse,
     EnginesResponse,
     EngineInfo,
     JobCreateResponse,
@@ -17,6 +19,7 @@ from backend.schemas.models import (
 from backend.services.job_service import JOB_STORE
 from refs import list_refs
 from tts_backends import get_backend, list_backends
+from text_tools import MANUAL_CHUNK_MARKER
 
 
 router = APIRouter(prefix="/v1")
@@ -108,6 +111,58 @@ def list_voices(request: Request, engine: str | None = Query(default=None)) -> V
     return VoicesResponse(engine=engine, voices=voices)
 
 
+@router.get("/tts/engine_schema", response_model=EngineSchemaResponse)
+def get_engine_schema(engine: str = Query(...)) -> EngineSchemaResponse:
+    meta = _engine_meta(engine) or {"backend_id": engine, "supports_ref": False}
+    backend = get_backend(meta.get("backend_id") or engine)
+    if backend is None:
+        raise HTTPException(status_code=404, detail="engine_not_found")
+    schema = backend.params_schema()
+    fields = []
+    for key, spec in schema.items():
+        fields.append(
+            EngineSchemaField(
+                key=key,
+                type=spec.type,
+                label=spec.label,
+                help=spec.help,
+                min=spec.min,
+                max=spec.max,
+                step=spec.step,
+                default=spec.default,
+                choices=spec.choices,
+                visible_if=spec.visible_if,
+                serialize_scope=spec.serialize_scope,
+            )
+        )
+    if engine.startswith("chatterbox_"):
+        fields.append(
+            EngineSchemaField(
+                key="chatterbox_gap_ms",
+                type="slider",
+                min=0,
+                max=2000,
+                step=10,
+                default=0,
+                label="Blanc entre chunks (ms)",
+                help="Ajoute un silence entre les chunks.",
+                serialize_scope="post",
+            )
+        )
+    capabilities = dict(backend.capabilities())
+    capabilities["supports_ref"] = bool(meta.get("supports_ref") or backend.supports_ref_audio)
+    constraints = {}
+    if capabilities.get("supports_ref"):
+        constraints["required"] = ["voice_id"]
+    return EngineSchemaResponse(
+        engine_id=engine,
+        backend_id=meta.get("backend_id"),
+        capabilities=capabilities,
+        fields=fields,
+        constraints=constraints,
+    )
+
+
 @router.get("/tts/models", response_model=ModelsResponse)
 def list_models(engine: str = Query(...)) -> ModelsResponse:
     backend = get_backend(engine)
@@ -119,7 +174,10 @@ def list_models(engine: str = Query(...)) -> ModelsResponse:
 
 @router.post("/tts/jobs", response_model=JobCreateResponse)
 def create_job(request: TTSJobRequest) -> JobCreateResponse:
-    meta = _engine_meta(request.engine)
+    engine_id = request.engine_id or request.engine
+    if not engine_id:
+        raise HTTPException(status_code=400, detail="engine_required")
+    meta = _engine_meta(engine_id)
     if meta is None:
         raise HTTPException(status_code=404, detail="engine_not_found")
     export = {
@@ -132,13 +190,13 @@ def create_job(request: TTSJobRequest) -> JobCreateResponse:
         export.update(request.export.dict())
     if export.get("format") != "wav":
         raise HTTPException(status_code=400, detail="only_wav_supported")
-    voice = request.voice or None
+    voice = request.voice_id or request.voice or None
     if meta["supports_ref"]:
         refs = list_refs()
         if voice is None or str(voice).strip() == "":
             if refs:
                 voice = refs[0]
-                LOGGER.info("default_voice_applied engine=%s voice=%s", request.engine, voice)
+                LOGGER.info("default_voice_applied engine=%s voice=%s", engine_id, voice)
             else:
                 raise HTTPException(status_code=400, detail="no reference voice available")
         elif voice not in refs:
@@ -147,22 +205,62 @@ def create_job(request: TTSJobRequest) -> JobCreateResponse:
         voice = None
 
     options = dict(request.options or {})
-    if request.engine == "chatterbox_native":
+    if request.engine_params:
+        options.update(request.engine_params)
+    post_params = dict(request.post_params or {})
+    gap_ms = post_params.get("chatterbox_gap_ms")
+    if gap_ms is not None:
+        options["inter_chunk_gap_ms"] = int(gap_ms)
+    if request.engine == "chatterbox_native" or engine_id == "chatterbox_native":
         options.setdefault("chatterbox_mode", "multilang")
-    elif request.engine == "chatterbox_finetune_fr":
+    elif request.engine == "chatterbox_finetune_fr" or engine_id == "chatterbox_finetune_fr":
         options.setdefault("chatterbox_mode", "fr_finetune")
+    if request.voice_id and not meta["supports_ref"]:
+        options.setdefault("voice_id", request.voice_id)
+
+    text = request.text
+    if text is None:
+        if request.text_source == "raw":
+            text = request.text_raw
+        elif request.text_source == "adjusted":
+            text = request.text_adjusted or request.text_raw
+        elif request.text_source == "interpreted":
+            text = request.text_interpreted or request.text_adjusted or request.text_raw
+        elif request.text_source == "snapshot":
+            text = request.text_snapshot or request.text_interpreted or request.text_adjusted or request.text_raw
+        else:
+            text = request.text_interpreted or request.text_adjusted or request.text_raw
+
+    direction_enabled = bool(request.direction.enabled) if request.direction else False
+    direction_marker = request.direction.chunk_marker if request.direction else MANUAL_CHUNK_MARKER
+    if request.text_snapshot:
+        snapshot_text = request.text_snapshot
+        if request.chunk_markers:
+            for pos in sorted(set(request.chunk_markers), reverse=True):
+                pos = int(pos)
+                pos = max(0, min(pos, len(snapshot_text)))
+                snapshot_text = f"{snapshot_text[:pos]}\n{direction_marker}\n{snapshot_text[pos:]}"
+        text = snapshot_text
+        if direction_marker in snapshot_text:
+            direction_enabled = True
+
+    editing_payload = request.editing.dict() if request.editing else {}
+    if request.edit_params:
+        editing_payload = dict(request.edit_params)
+    if editing_payload:
+        editing_payload.setdefault("enabled", True)
 
     payload = {
-        "text": request.text,
-        "engine": request.engine,
+        "text": text or "",
+        "engine": engine_id,
         "voice": voice,
         "model": request.model,
         "language": request.language,
-        "direction_enabled": bool(request.direction.enabled) if request.direction else False,
-        "direction_marker": request.direction.chunk_marker if request.direction else "[[CHUNK]]",
+        "direction_enabled": direction_enabled,
+        "direction_marker": direction_marker,
         "options": options,
         "export": export,
-        "editing": request.editing.dict() if request.editing else {"enabled": False},
+        "editing": editing_payload or {"enabled": False},
     }
     job = JOB_STORE.create_job(payload)
     return JobCreateResponse(job_id=job["job_id"], status=job["status"])

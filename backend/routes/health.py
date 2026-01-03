@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
+from backend.config import API_VERSION
 from backend.schemas.models import HealthResponse
 from backend.state import START_TIME
 
@@ -19,4 +20,4 @@ def _utc_now() -> datetime:
 def health() -> HealthResponse:
     now = _utc_now()
     uptime = int((now - START_TIME).total_seconds())
-    return HealthResponse(status="ok", uptime_s=uptime, timestamp=now)
+    return HealthResponse(status="ok", api_version=API_VERSION, uptime_s=uptime, timestamp=now)

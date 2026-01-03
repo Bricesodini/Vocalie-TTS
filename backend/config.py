@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
+API_VERSION = "v1"
 
 work_env = os.environ.get("VOCALIE_WORK_DIR")
 WORK_DIR = Path(work_env).expanduser() if work_env else BASE_DIR / "work"

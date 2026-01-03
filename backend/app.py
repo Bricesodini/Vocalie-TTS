@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
-from backend.config import WORK_DIR
-from backend.routes import assets, health, info, jobs, presets, tts
+from backend.config import API_VERSION, WORK_DIR
+from backend.routes import assets, audio, chunks, health, info, jobs, prep, presets, tts
 from backend.services.work_service import clean_work_dir
 
 
@@ -18,9 +18,19 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="Chatterbox TTS API", version="0.1.0", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def add_version_header(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Vocalie-Version"] = API_VERSION
+    return response
+
+
 app.include_router(health.router)
 app.include_router(info.router)
 app.include_router(tts.router)
 app.include_router(presets.router)
 app.include_router(jobs.router)
 app.include_router(assets.router)
+app.include_router(prep.router)
+app.include_router(chunks.router)
+app.include_router(audio.router)

@@ -31,13 +31,23 @@ def get_preset(preset_id: str) -> PresetResponse:
 
 @router.post("/presets", response_model=PresetMutationResponse)
 def create_preset(request: PresetCreateRequest) -> PresetMutationResponse:
-    result = preset_service.create_preset(request.id, request.name, request.data)
+    if request.state is None:
+        raise HTTPException(status_code=400, detail="preset_state_required")
+    try:
+        result = preset_service.create_preset(request.id, request.label, request.state)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return PresetMutationResponse(**result)
 
 
 @router.put("/presets/{preset_id}", response_model=PresetMutationResponse)
 def update_preset(preset_id: str, request: PresetUpdateRequest) -> PresetMutationResponse:
-    result = preset_service.update_preset(preset_id, request.name, request.data)
+    if request.state is None:
+        raise HTTPException(status_code=400, detail="preset_state_required")
+    try:
+        result = preset_service.update_preset(preset_id, request.label, request.state)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return PresetMutationResponse(**result)
 
 
