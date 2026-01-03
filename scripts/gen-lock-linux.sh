@@ -27,7 +27,6 @@ docker run --rm \
   -v "${FRONTEND_DIR}:/app" \
   -w /app \
   node:20-bookworm \
-  bash -lc "npm ci --no-audit --progress=false && npm run build"
+  bash -lc "npm ci --include=optional --no-audit --progress=false && npm run build"
 
 echo "Done. Commit frontend/package-lock.json."
-
