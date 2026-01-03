@@ -1,0 +1,33 @@
+{
+  "id": "example",
+  "label": "Example preset",
+  "state": {
+    "preset_id": "example",
+    "preparation": {
+      "text_raw": "Bonjour",
+      "text_adjusted": "",
+      "text_interpreted": "",
+      "glossary_enabled": false,
+      "glossary_profile": null,
+      "glossary_options": {}
+    },
+    "direction": {
+      "snapshot_text": "",
+      "chunk_markers": [],
+      "chunk_ranges": [],
+      "chunks_preview": []
+    },
+    "engine": {
+      "engine_id": "piper",
+      "voice_id": null,
+      "params": {},
+      "chatterbox_gap_ms": 0
+    },
+    "post": {
+      "edit_enabled": false,
+      "trim_enabled": false,
+      "normalize_enabled": false,
+      "target_dbfs": -1.0
+    }
+  }
+}

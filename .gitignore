@@ -10,10 +10,14 @@ node_modules/
 
 # Local app artifacts
 output/
-Ref_audio/
 work/
 .state/
-presets/
 .assets/
-.DS_Store
 *.wav
+
+# Keep folder structure, ignore local content
+Ref_audio/*
+!Ref_audio/.gitkeep
+presets/*
+!presets/.gitkeep
+!presets/example.json
