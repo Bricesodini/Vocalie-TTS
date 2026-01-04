@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WEIGHTS_DIR="$ROOT_DIR/.venvs/chatterbox/lib/python3.11/site-packages/chatterbox"
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: scripts/install-chatterbox-weights.sh <archive-path-or-url>"
+  echo "Example: scripts/install-chatterbox-weights.sh https://huggingface.co/.../resolve/main/model.tar.gz"
+  exit 1
+fi
+
+SOURCE="$1"
+TMP=""
+
+download() {
+  TMP="$(mktemp)"
+  trap 'rm -f "$TMP"' EXIT
+  echo "Downloading $SOURCE ..."
+  curl -L -o "$TMP" "$SOURCE"
+  SOURCE="$TMP"
+}
+
+if [[ "$SOURCE" =~ ^https?:// ]]; then
+  download
+fi
+
+if [[ ! -f "$SOURCE" ]]; then
+  echo "File not found: $SOURCE" >&2
+  exit 1
+fi
+
+mkdir -p "$WEIGHTS_DIR"
+rm -rf "$WEIGHTS_DIR"/* || true
+
+if file "$SOURCE" | grep -qi 'zip archive'; then
+  unzip -q "$SOURCE" -d "$WEIGHTS_DIR"
+elif file "$SOURCE" | grep -qi 'tar archive'; then
+  tar -xf "$SOURCE" -C "$WEIGHTS_DIR"
+else
+  cp -R "$SOURCE" "$WEIGHTS_DIR/"
+fi
+
+echo "Chatterbox weights installed under $WEIGHTS_DIR"
