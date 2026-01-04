@@ -14,6 +14,7 @@
 > 🚨 Avant de lancer `bootstrap`, télécharge et installe les poids Chatterbox (vanilla) + Thomcles FR :
 >
 > ```bash
+> export HUGGINGFACE_TOKEN=<token-avec-accès>
 > ./scripts/install-chatterbox-weights.sh https://huggingface.co/ResembleAI/Chatterbox/resolve/main/chatterbox.zip
 > ./scripts/install-chatterbox-weights.sh https://huggingface.co/Thomcles/Chatterbox-TTS-French/resolve/main/chatterbox-thomcles.zip
 > ```
