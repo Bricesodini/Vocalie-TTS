@@ -11,20 +11,20 @@
 
 ## Quickstart scripts
 
-> 🚨 Avant de lancer `bootstrap`, télécharge et installe les poids Chatterbox/Thomcles :
+> 🚨 Avant de lancer `bootstrap`, télécharge et installe les poids Chatterbox (vanilla) + Thomcles FR :
 >
 > ```bash
 > ./scripts/install-chatterbox-weights.sh https://huggingface.co/ResembleAI/Chatterbox/resolve/main/chatterbox.zip
+> ./scripts/install-chatterbox-weights.sh https://huggingface.co/Thomcles/Chatterbox-TTS-French/resolve/main/chatterbox-thomcles.zip
 > ```
-> 
-> Ce script extrait les checkpoints directement dans `.venvs/chatterbox/lib/python3.11/site-packages/chatterbox`. Il fonctionne avec une URL ou un fichier déjà téléchargé.
+>
+> Le script extrait les checkpoints dans `.venvs/chatterbox/lib/python3.11/site-packages/chatterbox/checkpoints`.
 
 1. `./scripts/bootstrap.sh min` – installe l’API + Chatterbox (préfetch auto).
-2. `./scripts/install-chatterbox-weights.sh <url>` – téléchargement automatique des poids HF dans le venv.
-3. `./scripts/bootstrap.sh std` – ajoute XTTS + Piper (à utiliser pour un socle complet).
-4. `./scripts/dev.sh` – redémarre le backend + front (Linux specialist deco).
-5. Sur macOS : `./scripts/dev-macos.sh`.
-6. Sur Windows : `pwsh ./scripts/dev-windows.ps1`.
+2. `./scripts.bootstrap.sh std` – ajoute XTTS + Piper (à utiliser pour un socle complet).
+3. `./scripts.dev.sh` – redémarre le backend + front (Linux utilise `npm ci` sur lock Linux-only).
+4. Sur macOS : `./scripts.dev-macos.sh`.
+5. Sur Windows : `pwsh ./scripts/dev-windows.ps1`.
 
 > ⚠️ Chatterbox : le `bootstrap` installe le runner et les dépendances, mais **ne télécharge pas automatiquement les poids** (HF). Après `./scripts/bootstrap.sh min`, lance `scripts/install-chatterbox-venv.sh` puis télécharge les modèles Chatterbox/Thomcles depuis Hugging Face et dépose-les sous `.venvs/chatterbox/lib/python3.11/site-packages/chatterbox`. Tu peux aussi utiliser `python -c "from backend_install.installer import run_install('chatterbox')"`. Voir la section “Voix & références” pour plus de détails.
 
@@ -42,23 +42,23 @@
 
 ### macOS
 
-- Après `./scripts/bootstrap.sh min`, fais `scripts/install-chatterbox-venv.sh` (ou `./scripts/install-chatterbox-venv.sh --force`) puis :
-  1. Télécharge les poids Chatterbox (Hugging Face) : `scripts/install-chatterbox-weights.sh https://huggingface.co/ResembleAI/Chatterbox/resolve/main/chatterbox.zip`.
-  2. Vérifie que `.venvs/chatterbox/lib/python3.11/site-packages/chatterbox` contient bien un dossier `checkpoints`.
-  3. `cd frontend && npm install --include=optional --no-audit --progress=false`.
-  4. Lance `./scripts/dev-macos.sh`.
-1. `./scripts/bootstrap.sh min`.
-2. `scripts/install-chatterbox-venv.sh` puis télécharge les poids/poids Th? (instructions).
-3. `cd frontend && npm install --include=optional --no-audit --progress=false`.
-4. `./scripts/dev-macos.sh`.
-5. Réinitialise `frontend/package-lock.json` si `npm install` l’a touché : `git checkout -- frontend/package-lock.json`.
+
+- Après `./scripts/bootstrap.sh min`, fais `scripts/install-chatterbox-venv.sh` (ou `--force`) puis :
+  1. Télécharge les poids Chatterbox vanilla :
+     `scripts/install-chatterbox-weights.sh https://huggingface.co/ResembleAI/Chatterbox/resolve/main/chatterbox.zip`.
+  2. Télécharge les poids Thomcles FR :
+     `scripts/install-chatterbox-weights.sh https://huggingface.co/Thomcles/Chatterbox-TTS-French/resolve/main/chatterbox-thomcles.zip`.
+  3. Vérifie que `.venvs/chatterbox/lib/python3.11/site-packages/chatterbox/checkpoints/` contient bien les deux dossiers.
+  4. `cd frontend && npm install --include=optional --no-audit --progress=false`.
+  5. Lance `./scripts/dev-macos.sh`.
+  6. Si `npm install` a modifié `package-lock.json`, annule les changements : `git checkout -- frontend/package-lock.json`.
 
 ### Windows
 
-- Même principe : après le `bootstrap`, lance `scripts/install-chatterbox-venv.sh` puis `scripts/install-chatterbox-weights.sh <url>` pour placer les modèles dans le venv, enfin `pwsh ./scripts/dev-windows.ps1`.
-1. `./scripts/bootstrap.sh min`.
-2. `scripts/install-chatterbox-venv.sh` + importer les modèles HF comme pour mac.
-3. `pwsh ./scripts/dev-windows.ps1` (s’assurer de la variable `VOCALIE_ENABLE_CUDA=1` pour GPU).
+- Même principe : après le `bootstrap`, lance `scripts/install-chatterbox-venv.sh`, installe **les deux paquets** (vanilla + Thomcles) puis `pwsh ./scripts/dev-windows.ps1`.
+- `./scripts.install-chatterbox-weights.sh https://huggingface.co/ResembleAI/Chatterbox/resolve/main/chatterbox.zip`
+- `./scripts.install-chatterbox-weights.sh https://huggingface.co/Thomcles/Chatterbox-TTS-French/resolve/main/chatterbox-thomcles.zip`
+- Pense à définir `VOCALIE_ENABLE_CUDA=1` si tu veux activer CUDA et vérifie les drivers (GPU Nvidia).
 
 > ℹ️ Le bootstrap affiche `Bootstrap (<mode>) finished in XXs.` à la fin. Les phases “pause” sont normales (pip install, runners, poids) : attends ce message avant de poursuivre.
 
