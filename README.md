@@ -23,6 +23,8 @@ Les scripts `scripts/dev.sh` / `scripts/dev-macos.sh` sont tes “Quickstart” 
 > `chmod +x scripts/dev.sh scripts/dev-frontend.sh scripts/dev-macos.sh`  
 > Alternativement, lance-les avec `bash scripts/dev-macos.sh` si tu préfères.
 
+> ℹ️ Le bootstrap affiche `Bootstrap (<mode>) finished in XXs.` à la fin. Les phases “pause” sont normales (pip install, runners, poids) : attends ce message avant de poursuivre.
+
 ## Plateforme
 
 ### Global

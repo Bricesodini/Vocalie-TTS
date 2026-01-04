@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+START_TS=$(date +%s)
 CORE_VENV="$ROOT_DIR/.venv"
 CHATTERBOX_VENV="$ROOT_DIR/.venvs/chatterbox"
 
@@ -144,3 +145,9 @@ case "$MODE" in
     exit 1
     ;;
 esac
+
+if [[ "$MODE" != "clean" ]]; then
+  END_TS=$(date +%s)
+  DURATION=$((END_TS - START_TS))
+  echo "Bootstrap ($MODE) finished in ${DURATION}s."
+fi
