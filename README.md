@@ -9,6 +9,15 @@
 - [Security model](#sécurité-perso-first)
 - [Contributing / extending](#scripts-optionnel)
 
+## Quickstart scripts
+
+1. `./scripts/bootstrap.sh min` – installe l’API + Chatterbox (préfetch auto).
+2. `./scripts/bootstrap.sh std` – ajoute XTTS + Piper (à utiliser pour un socle complet).
+3. `./scripts/dev.sh` – redémarre le backend + front; Linux utilise `npm ci` sur un lock Linux strict.
+4. Sur macOS : `./scripts/dev-macos.sh` (installe les dépendances via `npm install --include=optional`, démarre backend + frontend sans modifier le lock).
+
+Les scripts `scripts/dev.sh` / `scripts/dev-macos.sh` sont tes “Quickstart” pour lancer l’ensemble (backend + frontend + optional cockpit). Passer par `scripts/dev-macos.sh` évite les erreurs `npm ci` sur mac car il utilise un install local compatible macOS.
+
 ## Présentation
 
 Vocalie-TTS est une interface locale pour produire des voix off en français avec un pipeline simple, stable et reproductible.
