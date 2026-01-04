@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WEIGHTS_DIR="$ROOT_DIR/.venvs/chatterbox/lib/python3.11/site-packages/chatterbox"
+WEIGHTS_DIR="$ROOT_DIR/.venvs/chatterbox/lib/python3.11/site-packages/chatterbox/checkpoints"
 
 if [[ $# -lt 1 ]]; then
   echo "Usage: scripts/install-chatterbox-weights.sh <archive-path-or-url>"
@@ -30,8 +30,8 @@ if [[ ! -f "$SOURCE" ]]; then
   exit 1
 fi
 
+rm -rf "$WEIGHTS_DIR"
 mkdir -p "$WEIGHTS_DIR"
-rm -rf "$WEIGHTS_DIR"/* || true
 
 if file "$SOURCE" | grep -qi 'zip archive'; then
   unzip -q "$SOURCE" -d "$WEIGHTS_DIR"

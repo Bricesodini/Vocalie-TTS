@@ -190,7 +190,14 @@ export default function Home() {
     return !isGenerating;
   }, [uiState, supportsRef, engineAvailable, isGenerating]);
 
-  const engineFieldList = engineFields(engineSchema?.fields ?? []);
+  const engineFieldList = useMemo(() => {
+    const baseFields = engineFields(engineSchema?.fields ?? []);
+    if (!uiState.engine.engine_id) {
+      return baseFields;
+    }
+    const special = ["chatterbox_native", "chatterbox_finetune_fr"];
+    return baseFields.filter((field) => !(field.key === "chatterbox_mode" && special.includes(uiState.engine.engine_id)));
+  }, [engineSchema, uiState.engine.engine_id]);
   const postFieldList = postFields(engineSchema?.fields ?? []);
 
   useEffect(() => {
