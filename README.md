@@ -21,6 +21,8 @@
 >
 > Le script extrait les checkpoints dans `.venvs/chatterbox/lib/python3.11/site-packages/chatterbox/checkpoints`.
 
+> ℹ️ Pour Thomcles FR, tu dois exporter un token Hugging Face (`HUGGINGFACE_TOKEN` ou `HF_TOKEN`) avec les droits `read`. Sans token, `install-chatterbox-weights.sh` renvoie un fichier `text/plain` et refuse d’installer (message “Downloaded file does not look like a ZIP/TAR”). Si tu as un token, définis-le AVANT d’exécuter la commande (ou utilise `source ~/.bash_profile` par exemple).
+
 1. `./scripts/bootstrap.sh min` – installe l’API + Chatterbox (préfetch auto).
 2. `./scripts.bootstrap.sh std` – ajoute XTTS + Piper (à utiliser pour un socle complet).
 3. `./scripts.dev.sh` – redémarre le backend + front (Linux utilise `npm ci` sur lock Linux-only).
