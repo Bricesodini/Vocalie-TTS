@@ -5,8 +5,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEIGHTS_DIR="$ROOT_DIR/.venvs/chatterbox/lib/python3.11/site-packages/chatterbox/checkpoints"
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: scripts/install-chatterbox-weights.sh <archive-path-or-url>"
-  echo "Example: scripts/install-chatterbox-weights.sh https://huggingface.co/.../resolve/main/model.tar.gz"
+  echo "Usage: scripts/install-chatterbox-weights.sh <weights-dir|archive-path-or-url>"
+  echo "Example (dir): scripts/install-chatterbox-weights.sh /tmp/chatterbox-vanilla"
+  echo "Example (url): scripts/install-chatterbox-weights.sh https://huggingface.co/.../resolve/main/model.tar.gz"
   exit 1
 fi
 
@@ -25,6 +26,14 @@ download() {
   fi
   SOURCE="$TMP"
 }
+
+if [[ -d "$SOURCE" ]]; then
+  rm -rf "$WEIGHTS_DIR"
+  mkdir -p "$WEIGHTS_DIR"
+  cp -R "$SOURCE"/. "$WEIGHTS_DIR"/
+  echo "Chatterbox weights installed under $WEIGHTS_DIR"
+  exit 0
+fi
 
 if [[ "$SOURCE" =~ ^https?:// ]]; then
   download
