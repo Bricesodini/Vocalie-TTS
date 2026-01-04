@@ -9,6 +9,15 @@
 - [Security model](#sécurité-perso-first)
 - [Contributing / extending](#scripts-optionnel)
 
+## Quickstart scripts
+
+1. `./scripts/bootstrap.sh min` – installe l’API + Chatterbox (préfetch auto).
+2. `./scripts/bootstrap.sh std` – ajoute XTTS + Piper (à utiliser pour un socle complet).
+3. `./scripts/dev.sh` – redémarre le backend + front; Linux utilise `npm ci` sur un lock Linux strict.
+4. Sur macOS : `./scripts/dev-macos.sh` (installe les dépendances via `npm install --include=optional`, démarre backend + frontend sans modifier le lock).
+
+Les scripts `scripts/dev.sh` / `scripts/dev-macos.sh` sont tes “Quickstart” pour lancer l’ensemble (backend + frontend + optional cockpit). Passer par `scripts/dev-macos.sh` évite les erreurs `npm ci` sur mac car il utilise un install local compatible macOS.
+
 ## Présentation
 
 Vocalie-TTS est une interface locale pour produire des voix off en français avec un pipeline simple, stable et reproductible.
@@ -319,6 +328,38 @@ cd frontend
 npm ci
 npm run dev
 ```
+
+> ⚠️ **Bootstrap strict sur Linux seulement**  
+> `npm ci` repose sur le lockfile orienté Linux (celui que la CI et le bootstrap utilisent). Sur macOS cette commande échoue à cause de binaires natifs manquants.
+
+### Frontend sur macOS (dev local)
+
+1. Installe manuellement les dépendances localement :
+   ```bash
+   cd frontend
+   npm install --include=optional --no-audit --progress=false
+   ```
+2. Lance le frontend :
+   ```bash
+   npm run dev
+   ```
+3. Avant tout commit, annule les changements du lockfile générés localement :
+   ```bash
+   git checkout -- frontend/package-lock.json
+   ```
+
+`scripts/dev-frontend.sh` détecte macOS et t’indique ce workflow plutôt que d’essayer `npm ci`.
+
+### Démarrage complet macOS
+
+Sur macOS, tout faire “from scratch” devient :
+
+```bash
+./scripts/bootstrap.sh min
+./scripts/dev-macos.sh
+```
+
+`scripts/dev-macos.sh` installe les dépendances front localement puis lance backend + frontend (équivalent de `scripts/dev.sh` mais en gardant les binaires mac). Tu peux aussi lancer le backend séparément et `cd frontend && npm run dev` si tu préfères plus de contrôle.
 
 Ouvrez ensuite http://localhost:3000
 
