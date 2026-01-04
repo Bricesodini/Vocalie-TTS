@@ -15,6 +15,7 @@
 2. `./scripts/bootstrap.sh std` – ajoute XTTS + Piper (à utiliser pour un socle complet).
 3. `./scripts/dev.sh` – redémarre le backend + front; Linux utilise `npm ci` sur un lock Linux strict.
 4. Sur macOS : `./scripts/dev-macos.sh` (installe les dépendances via `npm install --include=optional`, démarre backend + frontend sans modifier le lock).
+5. Sur Windows : `pwsh ./scripts/dev-windows.ps1` (installe le frontend + lance backend/front depuis PowerShell).
 
 Les scripts `scripts/dev.sh` / `scripts/dev-macos.sh` sont tes “Quickstart” pour lancer l’ensemble (backend + frontend + optional cockpit). Passer par `scripts/dev-macos.sh` évite les erreurs `npm ci` sur mac car il utilise un install local compatible macOS.
 
@@ -38,6 +39,12 @@ Les scripts `scripts/dev.sh` / `scripts/dev-macos.sh` sont tes “Quickstart” 
 ### Linux (CI)
 
 - `npm ci --include=optional` est exécuté automatiquement dans `scripts/dev.sh` et dans la CI. Le lock est strictement Linux-only : ne le modifie que depuis Linux (use `bash ./scripts/gen-lock-linux.sh`).
+
+### Windows
+
+- Lance `powershell ./scripts/dev-windows.ps1`. Il installera les dépendances front (`npm install --include=optional`), puis démarrera backend + frontend.
+- Pour les GPU Nvidia, définis `VOCALIE_ENABLE_CUDA=1` avant de lancer le script ; il cherche les drivers CUDA / cuDNN dans le path standard. Le backend Python peut alors activer les modules GPU (via `torch` + `cuda`), surtout utile pour XTTS/Chatterbox si tu disposes d’une carte compatible.
+- Si tu préfères PowerShell Core : `pwsh ./scripts/dev-windows.ps1`.
 
 ## Voix & références
 
