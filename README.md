@@ -18,6 +18,43 @@
 
 Les scripts `scripts/dev.sh` / `scripts/dev-macos.sh` sont tes “Quickstart” pour lancer l’ensemble (backend + frontend + optional cockpit). Passer par `scripts/dev-macos.sh` évite les erreurs `npm ci` sur mac car il utilise un install local compatible macOS.
 
+> ⚠️ **Rendez les scripts exécutables** :  
+> `chmod +x scripts/dev.sh scripts/dev-frontend.sh scripts/dev-macos.sh`  
+> Alternativement, lance-les avec `bash scripts/dev-macos.sh` si tu préfères.
+
+## Plateforme
+
+### Global
+
+- Exécute `chmod +x scripts/dev.sh scripts/dev-frontend.sh scripts/dev-macos.sh` une fois après avoir cloné.
+- `./scripts/bootstrap.sh std` prépare les venv + préfetch nécessaire, puis tu peux lancer `./scripts/dev.sh` (Linux) ou `./scripts/dev-macos.sh` (macOS).
+
+### macOS
+
+- Lance `npm install --include=optional --no-audit --progress=false` dans `frontend/` pour créer les binaires mac.
+- Ensuite, démarre tout avec `./scripts/dev-macos.sh`. Le backend et le frontend démarrent avec les binaires correspondants.
+- Quand tu commits, vérifie que `frontend/package-lock.json` reste inchangé (il faut `git checkout -- frontend/package-lock.json` si npm l’a modifié).
+
+### Linux (CI)
+
+- `npm ci --include=optional` est exécuté automatiquement dans `scripts/dev.sh` et dans la CI. Le lock est strictement Linux-only : ne le modifie que depuis Linux (use `bash ./scripts/gen-lock-linux.sh`).
+
+## Voix & références
+
+### Piper (voix FR)
+
+1. Télécharge un pack de voix FR compatible Piper (archive `.zip`/`.tar.gz`). Tu peux réutiliser des collections publiques (ex : un repo Hugging Face listant `piper-voices-fr.zip`).
+2. Lance `./scripts/install-piper-voices.sh <chemin-ou-url>` depuis la racine. Le script extrait les fichiers dans `.assets/piper/voices`.
+3. Redémarre l’API (`scripts/dev.sh` ou `scripts/dev-macos.sh`). Les voix apparaissent automatiquement dans les presets/schemas.
+
+`scripts/install-piper-voices.sh` accepte aussi une URL (https://...), il télécharge, extrait et nettoie l’archive.
+
+### Chatterbox & XTTS
+
+- Pour que Chatterbox/XTTS puissent cloner une voix, place tes WAV de référence dans `Ref_audio/` (ex : `Ref_audio/essai.m4a`).
+- Chaque fichier `.wav`/`.m4a` devient une option de voix clonée dans la section “Références audio” du frontend.
+- Après ajout, relance `scripts/dev.sh` ou `scripts/dev-macos.sh` pour rafraîchir la liste des voix.
+
 ## Présentation
 
 Vocalie-TTS est une interface locale pour produire des voix off en français avec un pipeline simple, stable et reproductible.
