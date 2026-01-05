@@ -825,7 +825,20 @@ export default function Home() {
               <Button variant="outline" onClick={handleCancelJob} disabled={!jobId || !isGenerating}>
                 Annuler
               </Button>
-              <div className="text-sm text-zinc-500">{status} · {(progress * 100).toFixed(0)}%</div>
+              <div className="flex items-center gap-2 text-sm text-zinc-500">
+                {isGenerating && (
+                  <>
+                    <span
+                      className="inline-flex h-3 w-3 animate-spin rounded-full border-2 border-zinc-400 border-t-transparent"
+                      aria-hidden="true"
+                    />
+                    <span className="sr-only">Generation en cours</span>
+                  </>
+                )}
+                <span>
+                  {status} · {(progress * 100).toFixed(0)}%
+                </span>
+              </div>
             </div>
             {audioHref && (
               <div className="rounded-md border border-zinc-200 bg-white p-3">

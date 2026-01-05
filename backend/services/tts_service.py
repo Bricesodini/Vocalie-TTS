@@ -217,7 +217,10 @@ def run_tts_job(
     }
 
     progress_cb(0.30)
-    result = generate_raw_wav(payload)
+    result = generate_raw_wav(
+        payload,
+        progress_cb=lambda value: progress_cb(0.30 + (0.60 * float(value))),
+    )
     progress_cb(0.90)
 
     raw_path.parent.mkdir(parents=True, exist_ok=True)

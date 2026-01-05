@@ -209,9 +209,9 @@ def minimal_post_process(
     }
 
 
-def generate_raw_wav(request: dict) -> PipelineResult:
+def generate_raw_wav(request: dict, progress_cb=None) -> PipelineResult:
     request = dict(request)
-    return run_tts_pipeline(request)
+    return run_tts_pipeline(request, progress_cb=progress_cb)
 
 
 def _coerce_audio_result(result, default_sr: int | None = None):
@@ -224,7 +224,7 @@ def _coerce_audio_result(result, default_sr: int | None = None):
     raise TypeError(f"Unsupported audio result: {type(result)}")
 
 
-def run_tts_pipeline(request: dict) -> PipelineResult:
+def run_tts_pipeline(request: dict, progress_cb=None) -> PipelineResult:
     backend_id = request.get("tts_backend")
     backend = get_backend(backend_id)
     if backend is None:
@@ -282,6 +282,9 @@ def run_tts_pipeline(request: dict) -> PipelineResult:
     backend_meta_last: dict[str, Any] = {}
     backend_logs: list[str] = []
 
+    if progress_cb:
+        progress_cb(0.0)
+
     for idx, chunk_info in enumerate(chunks, start=1):
         chunk_segments = list(chunk_info.segments)
         clean_text = render_clean_text_from_segments(chunk_segments)
@@ -316,6 +319,8 @@ def run_tts_pipeline(request: dict) -> PipelineResult:
         durations.append(duration)
         retries.append(bool(meta.get("retry")))
         audio_chunks.append(audio)
+        if progress_cb and chunks:
+            progress_cb(idx / float(len(chunks)))
 
     inter_chunk_gap_ms = int(request.get("inter_chunk_gap_ms") or 0)
     if backend_id != "chatterbox":
