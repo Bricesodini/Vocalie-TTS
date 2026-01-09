@@ -19,6 +19,7 @@ output/
 work/
 .state/
 .assets/
+.run/
 *.wav
 
 # Keep folder structure, ignore local content

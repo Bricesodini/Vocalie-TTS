@@ -148,10 +148,28 @@ function postFields(fields: EngineSchemaField[]) {
   return fields.filter((field) => field.serialize_scope === "post");
 }
 
+type FilePickerOptions = {
+  suggestedName?: string;
+  types?: Array<{
+    description?: string;
+    accept: Record<string, string[]>;
+  }>;
+};
+
+type FileWritable = {
+  write: (data: Blob) => Promise<void>;
+  close: () => Promise<void>;
+};
+
+type FileHandle = {
+  createWritable: () => Promise<FileWritable>;
+};
+
+type ShowSaveFilePicker = (options?: FilePickerOptions) => Promise<FileHandle>;
+
 async function saveAudioBlob(blob: Blob, suggestedName: string) {
   if (typeof window !== "undefined" && "showSaveFilePicker" in window) {
-    const picker = (window as typeof window & { showSaveFilePicker?: (options?: unknown) => Promise<any> })
-      .showSaveFilePicker;
+    const picker = (window as Window & { showSaveFilePicker?: ShowSaveFilePicker }).showSaveFilePicker;
     if (picker) {
       const handle = await picker({
         suggestedName,
