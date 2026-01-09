@@ -148,6 +148,37 @@ function postFields(fields: EngineSchemaField[]) {
   return fields.filter((field) => field.serialize_scope === "post");
 }
 
+async function saveAudioBlob(blob: Blob, suggestedName: string) {
+  if (typeof window !== "undefined" && "showSaveFilePicker" in window) {
+    const picker = (window as typeof window & { showSaveFilePicker?: (options?: unknown) => Promise<any> })
+      .showSaveFilePicker;
+    if (picker) {
+      const handle = await picker({
+        suggestedName,
+        types: [
+          {
+            description: "WAV audio",
+            accept: { "audio/wav": [".wav"] },
+          },
+        ],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return;
+    }
+  }
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = suggestedName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export default function Home() {
   const [uiState, setUiState] = useState<UIState>(EMPTY_STATE);
   const [engines, setEngines] = useState<EngineInfo[]>([]);
@@ -171,6 +202,8 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isExportingEdited, setIsExportingEdited] = useState(false);
 
   const supportsRef = useMemo(() => {
     const engine = engines.find((item) => item.id === uiState.engine.engine_id);
@@ -524,6 +557,25 @@ export default function Home() {
     }
   }
 
+  async function handleExport(targetAssetId: string | null, suggestedName: string, setBusy: (val: boolean) => void) {
+    if (!targetAssetId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const resp = await fetch(assetUrl(targetAssetId));
+      if (!resp.ok) {
+        throw new Error(`${resp.status} ${resp.statusText}`);
+      }
+      const blob = await resp.blob();
+      await saveAudioBlob(blob, suggestedName);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setError(err instanceof Error ? err.message : "Export impossible.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const internalVoiceCount = engineSchema?.fields?.find((field) => field.key === "voice_id")?.choices?.length ?? 0;
   const context = {
     ...(engineSchema?.capabilities ?? {}),
@@ -825,6 +877,13 @@ export default function Home() {
               <Button variant="outline" onClick={handleCancelJob} disabled={!jobId || !isGenerating}>
                 Annuler
               </Button>
+              <Button
+                variant="outline"
+                onClick={() => handleExport(assetId, `vocalie-generation-${assetId ?? "audio"}.wav`, setIsExporting)}
+                disabled={!assetId || isExporting}
+              >
+                {isExporting ? "Export..." : "Exporter"}
+              </Button>
               <div className="flex items-center gap-2 text-sm text-zinc-500">
                 {isGenerating && (
                   <>
@@ -917,6 +976,15 @@ export default function Home() {
             <div className="flex items-center gap-2">
               <Button onClick={handleEdit} disabled={!assetId || isEditing || !uiState.post.edit_enabled}>
                 {isEditing ? "Edition..." : "Editer"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() =>
+                  handleExport(editedAssetId, `vocalie-edition-${editedAssetId ?? "audio"}.wav`, setIsExportingEdited)
+                }
+                disabled={!editedAssetId || isExportingEdited}
+              >
+                {isExportingEdited ? "Export..." : "Exporter"}
               </Button>
               {editedPath && <span className="text-xs text-zinc-500">{editedPath}</span>}
             </div>
