@@ -141,7 +141,7 @@ def run_audiosr(input_path: str, output_path: str, params: dict) -> dict:
         env["HF_HOME"] = os.environ["HF_HOME"]
     if "HUGGINGFACE_HUB_CACHE" in os.environ:
         env["HUGGINGFACE_HUB_CACHE"] = os.environ["HUGGINGFACE_HUB_CACHE"]
-    env.setdefault("PYTHONWARNINGS", "ignore::UserWarning")
+    env.setdefault("PYTHONWARNINGS", "ignore::UserWarning,ignore::FutureWarning")
 
     try:
         result = subprocess.run(

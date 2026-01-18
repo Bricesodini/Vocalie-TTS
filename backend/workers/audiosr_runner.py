@@ -88,6 +88,7 @@ def main() -> int:
         message="pkg_resources is deprecated*",
         category=UserWarning,
     )
+    warnings.filterwarnings("ignore", category=FutureWarning)
 
     import torch
     from audiosr import build_model
