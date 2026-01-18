@@ -22,6 +22,9 @@ Vocalie-TTS s'adresse aux createurs audio/video qui recherchent :
 - Post-traitement audio optionnel :
   - nettoyage des silences en debut et fin
   - normalisation du niveau sonore (dBFS)
+- Amelioration audio optionnelle (AudioSR) :
+  - mode studio (plus lent)
+  - parametres reglables (steps, guidance, seed, chunking)
 
 ---
 
@@ -110,6 +113,12 @@ Ouvrir ensuite :
 - Frontend : http://localhost:3000
 - API : http://127.0.0.1:8000
 
+Option AudioSR (amelioration audio) :
+```bash
+export VOCALIE_ENABLE_AUDIOSR=1
+./scripts/install-audiosr-venv.sh
+```
+
 ---
 
 ## Installation par plateforme
@@ -130,6 +139,12 @@ Le frontend utilise `npm ci` avec un lockfile Linux-only (CI stricte).
 1. Bootstrap backend + moteurs :
 ```bash
 ./scripts/bootstrap.sh min
+```
+
+AudioSR (optionnel) :
+```bash
+export VOCALIE_ENABLE_AUDIOSR=1
+./scripts/install-audiosr-venv.sh
 ```
 
 2. Precharger les poids Chatterbox (cache HF) :
@@ -166,6 +181,11 @@ pwsh ./scripts/dev-windows.ps1
 Option GPU Nvidia :
 ```powershell
 setx VOCALIE_ENABLE_CUDA 1
+```
+
+Option AudioSR :
+```powershell
+setx VOCALIE_ENABLE_AUDIOSR 1
 ```
 
 ---
@@ -216,8 +236,9 @@ Automatiser ce qui est repetitif, garder explicite ce qui influence le son.
 ## Reproductibilite (lockfiles)
 
 - Python :
-  - `requirements.lock.txt`
-  - `requirements-chatterbox.lock.txt`
+- `requirements.lock.txt`
+- `requirements-chatterbox.lock.txt`
+- `requirements-audiosr.lock.txt` (optionnel)
 - Generation :
 ```bash
 ./scripts/lock-requirements.sh
@@ -246,6 +267,20 @@ curl http://127.0.0.1:8000/v1/tts/engines
 curl "http://127.0.0.1:8000/v1/tts/voices?engine=chatterbox_native"
 ```
 
+### Capabilities (AudioSR)
+
+```bash
+curl http://127.0.0.1:8000/v1/capabilities
+```
+
+### Amelioration audio (AudioSR)
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/audio/enhance \
+  -F "file=@tests/assets/audiosr_sample.wav" \
+  -F "engine=audiosr"
+```
+
 ### Generation (extrait)
 
 ```bash
@@ -262,6 +297,8 @@ curl -X POST http://127.0.0.1:8000/v1/tts/jobs \
 - XTTS sur macOS -> CPU only (comportement attendu)
 - Probleme Hugging Face gated model -> verifier `HUGGINGFACE_TOKEN`
 - `Module not found` frontend -> `rm -rf node_modules && npm install`
+- AudioSR n'apparait pas dans le frontend -> verifier `GET /v1/capabilities` et que `VOCALIE_ENABLE_AUDIOSR=1` est bien defini pour le backend
+- Premier run AudioSR lent -> telechargement des poids (cache Hugging Face), comportement attendu
 
 ---
 

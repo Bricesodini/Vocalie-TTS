@@ -6,6 +6,7 @@ API_BASE="${API_BASE:-http://127.0.0.1:8000}"
 HEALTH_URL="$API_BASE/v1/health"
 ENGINES_URL="$API_BASE/v1/tts/engines"
 VOICES_URL="$API_BASE/v1/tts/voices?engine=chatterbox_native"
+CAPABILITIES_URL="$API_BASE/v1/capabilities"
 STARTED=0
 PID=""
 
@@ -78,7 +79,43 @@ if not isinstance(voices, list) or not voices:
     sys.exit("voices list missing/empty")
 PY
 
-schema_payload="$(curl -fsS \"$API_BASE/v1/tts/engine_schema?engine=bark\")"
+cap_payload="$(curl -fsS "$CAPABILITIES_URL")"
+CAP_PAYLOAD="$cap_payload" python3 - <<'PY'
+import json, os, sys
+payload = json.loads(os.environ["CAP_PAYLOAD"])
+if "audiosr" not in payload:
+    sys.exit("capabilities missing audiosr key")
+PY
+
+audiosr_available="$(CAP_PAYLOAD="$cap_payload" python3 - <<'PY'
+import json, os
+payload = json.loads(os.environ["CAP_PAYLOAD"])
+audiosr = payload.get("audiosr") or {}
+print("1" if audiosr.get("available") else "0")
+PY
+)"
+
+if [[ "$audiosr_available" == "1" ]]; then
+  sample_path="$ROOT_DIR/tests/assets/audiosr_sample.wav"
+  if [[ ! -f "$sample_path" ]]; then
+    echo "Missing AudioSR sample wav at $sample_path" >&2
+    exit 1
+  fi
+  enhance_json="$(curl -fsS -X POST "$API_BASE/v1/audio/enhance" -F "file=@$sample_path" -F "engine=audiosr")"
+  ENHANCE_JSON="$enhance_json" python3 - <<'PY'
+import json, os, sys
+payload = json.loads(os.environ["ENHANCE_JSON"])
+if int(payload.get("sample_rate") or 0) != 48000:
+    sys.exit("audiosr sample_rate not 48000")
+output_file = payload.get("output_file")
+if not output_file:
+    sys.exit("audiosr output_file missing")
+if not os.path.exists(output_file):
+    sys.exit(f"audiosr output_file missing on disk: {output_file}")
+PY
+fi
+
+schema_payload="$(curl -fsS "$API_BASE/v1/tts/engine_schema?engine=bark")"
 SCHEMA_PAYLOAD="$schema_payload" python3 - <<'PY'
 import json, os, sys
 payload = json.loads(os.environ["SCHEMA_PAYLOAD"])
