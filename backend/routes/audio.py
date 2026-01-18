@@ -183,7 +183,7 @@ async def enhance_audio(
         detail = str(exc) or "audiosr_failed"
         if len(detail) > 300:
             detail = detail[:300] + "..."
-        raise HTTPException(status_code=500, detail=f\"AudioSR runner failed: {detail}\") from exc
+        raise HTTPException(status_code=500, detail=f"AudioSR runner failed: {detail}") from exc
     finally:
         try:
             upload_path.unlink(missing_ok=True)
@@ -200,37 +200,37 @@ async def enhance_audio(
         rel_path = str(output_path.relative_to(backend_config.OUTPUT_DIR))
     except ValueError:
         rel_path = output_path.name
-    asset_id = f\"asset_{uuid.uuid4().hex}\"
+    asset_id = f"asset_{uuid.uuid4().hex}"
     asset_service.write_asset_meta(
         asset_id,
         {
-            \"file_name\": output_path.name,
-            \"relative_path\": rel_path,
-            \"size_bytes\": int(output_path.stat().st_size),
-            \"duration_s\": result.get(\"duration_s\"),
-            \"sample_rate\": result.get(\"sample_rate\"),
-            \"engine\": \"audiosr\",
-            \"voice\": None,
-            \"model\": None,
+            "file_name": output_path.name,
+            "relative_path": rel_path,
+            "size_bytes": int(output_path.stat().st_size),
+            "duration_s": result.get("duration_s"),
+            "sample_rate": result.get("sample_rate"),
+            "engine": "audiosr",
+            "voice": None,
+            "model": None,
         },
     )
 
     audiosr_service.write_sidecar(
         meta_path,
         {
-            \"engine\": \"audiosr\",
-            \"params\": params,
-            \"created_at\": dt.datetime.now(dt.timezone.utc).isoformat(timespec=\"seconds\"),
-            \"output_file\": output_path.name,
-            \"sample_rate\": result.get(\"sample_rate\"),
-            \"duration_s\": result.get(\"duration_s\"),
+            "engine": "audiosr",
+            "params": params,
+            "created_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+            "output_file": output_path.name,
+            "sample_rate": result.get("sample_rate"),
+            "duration_s": result.get("duration_s"),
         },
     )
 
     return AudioEnhanceResponse(
         output_file=str(output_path),
-        sample_rate=int(result.get(\"sample_rate\") or 48000),
-        duration_s=float(result.get(\"duration_s\") or 0.0),
+        sample_rate=int(result.get("sample_rate") or 48000),
+        duration_s=float(result.get("duration_s") or 0.0),
         asset_id=asset_id,
-        engine=\"audiosr\",
+        engine="audiosr",
     )
