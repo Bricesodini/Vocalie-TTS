@@ -225,6 +225,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [editProgress, setEditProgress] = useState(0);
   const [isExporting, setIsExporting] = useState(false);
   const [isExportingEdited, setIsExportingEdited] = useState(false);
   const [audiosrStatus, setAudiosrStatus] = useState<{ enabled: boolean; available: boolean } | null>(null);
@@ -640,12 +641,16 @@ export default function Home() {
   async function handleEdit() {
     if (!assetId) return;
     setIsEditing(true);
+    setEditProgress(0);
     setEditedPath(null);
     setEditedAssetId(null);
     setEditedAudioHref(null);
     setEditSummary(null);
     let currentAssetId = assetId;
     let lastOutputFile: string | null = null;
+    const totalSteps =
+      (audiosrEnabled ? 1 : 0) + (uiState.post.trim_enabled ? 1 : 0) + (uiState.post.normalize_enabled ? 1 : 0);
+    let completedSteps = 0;
     try {
       if (audiosrEnabled) {
         const enhanced = await enhanceAsset(currentAssetId);
@@ -653,6 +658,8 @@ export default function Home() {
           currentAssetId = enhanced.asset_id;
           lastOutputFile = enhanced.output_file;
         }
+        completedSteps += 1;
+        if (totalSteps > 0) setEditProgress(completedSteps / totalSteps);
       }
 
       if (uiState.post.trim_enabled) {
@@ -666,6 +673,8 @@ export default function Home() {
           currentAssetId = trimmed.asset_id;
           lastOutputFile = trimmed.edited_wav_path;
         }
+        completedSteps += 1;
+        if (totalSteps > 0) setEditProgress(completedSteps / totalSteps);
       }
 
       if (uiState.post.normalize_enabled) {
@@ -679,6 +688,8 @@ export default function Home() {
           currentAssetId = normalized.asset_id;
           lastOutputFile = normalized.edited_wav_path;
         }
+        completedSteps += 1;
+        if (totalSteps > 0) setEditProgress(completedSteps / totalSteps);
       }
 
       setEditedAssetId(currentAssetId);
@@ -688,6 +699,7 @@ export default function Home() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Edition impossible.");
     } finally {
+      setEditProgress(1);
       setIsEditing(false);
     }
   }
@@ -1239,6 +1251,15 @@ export default function Home() {
                 {isExportingEdited ? "Export..." : "Exporter le fichier"}
               </Button>
               {editedPath && <span className="text-xs text-zinc-500">{editedPath}</span>}
+              {isEditing && (
+                <div className="flex items-center gap-2 text-xs text-zinc-500">
+                  <span
+                    className="inline-flex h-3 w-3 animate-spin rounded-full border-2 border-zinc-400 border-t-transparent"
+                    aria-hidden="true"
+                  />
+                  <span>{Math.round(editProgress * 100)}%</span>
+                </div>
+              )}
             </div>
             {editSummary && (
               <div className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600">

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import tempfile
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -81,6 +82,12 @@ def main() -> int:
     parser.add_argument("--multiband_ensemble", type=int, default=0)
     parser.add_argument("--input_cutoff", type=int, default=8000)
     args = parser.parse_args()
+
+    warnings.filterwarnings(
+        "ignore",
+        message="pkg_resources is deprecated*",
+        category=UserWarning,
+    )
 
     import torch
     from audiosr import build_model
