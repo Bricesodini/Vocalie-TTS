@@ -9,6 +9,17 @@ export type EnginesResponse = {
   engines: EngineInfo[];
 };
 
+export type AudioSRStatus = {
+  enabled: boolean;
+  available: boolean;
+};
+
+export type CapabilitiesResponse = {
+  engines: string[];
+  features: Record<string, unknown>;
+  audiosr?: AudioSRStatus | null;
+};
+
 export type PresetListItem = {
   id: string;
   label?: string | null;
@@ -152,4 +163,26 @@ export type AudioEditResponse = {
   edited_wav_path: string;
   asset_id?: string | null;
   metrics: Record<string, unknown>;
+};
+
+export type AudioEnhanceResponse = {
+  output_file: string;
+  sample_rate: number;
+  duration_s: number;
+  asset_id?: string | null;
+  engine: string;
+};
+
+export type AssetMetaResponse = {
+  asset_id: string;
+  file_name: string;
+  relative_path?: string | null;
+  size_bytes: number;
+  duration_s?: number | null;
+  sample_rate?: number | null;
+  engine?: string | null;
+  voice?: string | null;
+  model?: string | null;
+  created_at?: string | null;
+  job_id?: string | null;
 };

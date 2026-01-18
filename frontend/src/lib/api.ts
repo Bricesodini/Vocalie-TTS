@@ -57,6 +57,18 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   return (await resp.json()) as T;
 }
 
+export async function apiPostForm<T>(path: string, body: FormData): Promise<T> {
+  const resp = await fetch(buildUrl(path), {
+    method: "POST",
+    body,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(text || `${resp.status} ${resp.statusText}`);
+  }
+  return (await resp.json()) as T;
+}
+
 export async function apiPut<T>(path: string, body: unknown): Promise<T> {
   const resp = await fetch(buildUrl(path), {
     method: "PUT",

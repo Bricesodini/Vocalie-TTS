@@ -18,9 +18,12 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { apiDelete, apiGet, apiPost, apiPut, assetUrl, fetchVoices } from "@/lib/api";
+import { apiDelete, apiGet, apiPost, apiPostForm, apiPut, assetUrl, fetchVoices } from "@/lib/api";
 import type {
+  AssetMetaResponse,
   AudioEditResponse,
+  AudioEnhanceResponse,
+  CapabilitiesResponse,
   ChunkMarkerResponse,
   ChunkPreviewResponse,
   ChunkSnapshotResponse,
@@ -216,12 +219,26 @@ export default function Home() {
   const [editedPath, setEditedPath] = useState<string | null>(null);
   const [editedAssetId, setEditedAssetId] = useState<string | null>(null);
   const [editedAudioHref, setEditedAudioHref] = useState<string | null>(null);
-  const [editedMeta, setEditedMeta] = useState<Record<string, unknown> | null>(null);
+  const [editSummary, setEditSummary] = useState<{ sample_rate?: number | null; duration_s?: number | null } | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isExportingEdited, setIsExportingEdited] = useState(false);
+  const [audiosrStatus, setAudiosrStatus] = useState<{ enabled: boolean; available: boolean } | null>(null);
+  const [audiosrEnabled, setAudiosrEnabled] = useState(false);
+  const [audiosrParams, setAudiosrParams] = useState({
+    ddim_steps: 100,
+    guidance_scale: 2.5,
+    seed: 0,
+    multiband_ensemble: false,
+    chunk_size: 32768,
+    overlap: 1024,
+    input_cutoff: 8000,
+  });
+  const [audiosrAdvancedOpen, setAudiosrAdvancedOpen] = useState(false);
 
   const supportsRef = useMemo(() => {
     const engine = engines.find((item) => item.id === uiState.engine.engine_id);
@@ -240,6 +257,10 @@ export default function Home() {
     if (supportsRef && !uiState.engine.voice_id) return false;
     return !isGenerating;
   }, [uiState, supportsRef, engineAvailable, isGenerating]);
+
+  const audiosrAvailable = audiosrStatus?.available ?? false;
+  const canApplyEdit = Boolean(assetId && !isEditing);
+  const exportTargetId = editedAssetId ?? assetId;
 
   const engineFieldList = useMemo(() => {
     const baseFields = engineFields(engineSchema?.fields ?? []);
@@ -275,6 +296,38 @@ export default function Home() {
       active = false;
     };
   }, [uiState.engine.engine_id]);
+
+  useEffect(() => {
+    let active = true;
+    async function loadCapabilities() {
+      try {
+        const data = await apiGet<CapabilitiesResponse>("/v1/capabilities");
+        if (!active) return;
+        const audiosr = data.audiosr ?? null;
+        const normalized = {
+          enabled: Boolean(audiosr?.enabled),
+          available: Boolean(audiosr?.available),
+        };
+        if (process.env.NODE_ENV === "development") {
+          console.log("capabilities", data);
+        }
+        setAudiosrStatus(normalized);
+      } catch (err) {
+        if (!active) return;
+        setAudiosrStatus({ enabled: false, available: false });
+      }
+    }
+    loadCapabilities();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!audiosrAvailable) {
+      setAudiosrEnabled(false);
+    }
+  }, [audiosrAvailable]);
 
   useEffect(() => {
     let active = true;
@@ -487,7 +540,7 @@ export default function Home() {
     setEditedPath(null);
     setEditedAssetId(null);
     setEditedAudioHref(null);
-    setEditedMeta(null);
+    setEditSummary(null);
 
     try {
       const textSnapshot = uiState.direction.snapshot_text.trim();
@@ -550,24 +603,88 @@ export default function Home() {
     }
   }
 
+  async function enhanceAsset(sourceAssetId: string): Promise<AudioEnhanceResponse> {
+    const resp = await fetch(assetUrl(sourceAssetId));
+    if (!resp.ok) {
+      throw new Error(`${resp.status} ${resp.statusText}`);
+    }
+    const blob = await resp.blob();
+    const file = new File([blob], `vocalie-${sourceAssetId}.wav`, {
+      type: blob.type || "audio/wav",
+    });
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("engine", "audiosr");
+    formData.append("ddim_steps", String(audiosrParams.ddim_steps));
+    formData.append("guidance_scale", String(audiosrParams.guidance_scale));
+    formData.append("seed", String(audiosrParams.seed));
+    formData.append("chunk_size", String(audiosrParams.chunk_size));
+    formData.append("overlap", String(audiosrParams.overlap));
+    formData.append("multiband_ensemble", audiosrParams.multiband_ensemble ? "1" : "0");
+    formData.append("input_cutoff", String(audiosrParams.input_cutoff));
+    return apiPostForm<AudioEnhanceResponse>("/v1/audio/enhance", formData);
+  }
+
+  async function fetchEditSummary(targetAssetId: string) {
+    try {
+      const meta = await apiGet<AssetMetaResponse>(`/v1/assets/${targetAssetId}/meta`);
+      setEditSummary({ sample_rate: meta.sample_rate ?? null, duration_s: meta.duration_s ?? null });
+      if (process.env.NODE_ENV === "development") {
+        setEditedPath(meta.file_name || null);
+      }
+    } catch {
+      setEditSummary(null);
+    }
+  }
+
   async function handleEdit() {
-    if (!assetId || !uiState.post.edit_enabled) return;
+    if (!assetId) return;
     setIsEditing(true);
     setEditedPath(null);
     setEditedAssetId(null);
     setEditedAudioHref(null);
-    setEditedMeta(null);
+    setEditSummary(null);
+    let currentAssetId = assetId;
+    let lastOutputFile: string | null = null;
     try {
-      const result = await apiPost<AudioEditResponse>("/v1/audio/edit", {
-        asset_id: assetId,
-        trim_enabled: uiState.post.trim_enabled,
-        normalize_enabled: uiState.post.normalize_enabled,
-        target_dbfs: uiState.post.target_dbfs,
-      });
-      setEditedPath(result.edited_wav_path);
-      setEditedAssetId(result.asset_id ?? null);
-      setEditedAudioHref(result.asset_id ? assetUrl(result.asset_id) : null);
-      setEditedMeta(result.metrics);
+      if (audiosrEnabled) {
+        const enhanced = await enhanceAsset(currentAssetId);
+        if (enhanced.asset_id) {
+          currentAssetId = enhanced.asset_id;
+          lastOutputFile = enhanced.output_file;
+        }
+      }
+
+      if (uiState.post.trim_enabled) {
+        const trimmed = await apiPost<AudioEditResponse>("/v1/audio/edit", {
+          asset_id: currentAssetId,
+          trim_enabled: true,
+          normalize_enabled: false,
+          target_dbfs: uiState.post.target_dbfs,
+        });
+        if (trimmed.asset_id) {
+          currentAssetId = trimmed.asset_id;
+          lastOutputFile = trimmed.edited_wav_path;
+        }
+      }
+
+      if (uiState.post.normalize_enabled) {
+        const normalized = await apiPost<AudioEditResponse>("/v1/audio/edit", {
+          asset_id: currentAssetId,
+          trim_enabled: false,
+          normalize_enabled: true,
+          target_dbfs: uiState.post.target_dbfs,
+        });
+        if (normalized.asset_id) {
+          currentAssetId = normalized.asset_id;
+          lastOutputFile = normalized.edited_wav_path;
+        }
+      }
+
+      setEditedAssetId(currentAssetId);
+      setEditedAudioHref(assetUrl(currentAssetId));
+      setEditedPath(lastOutputFile);
+      await fetchEditSummary(currentAssetId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Edition impossible.");
     } finally {
@@ -933,45 +1050,158 @@ export default function Home() {
           </CardHeader>
           <CardContent className="grid gap-4">
             <label className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2">
-              <span className="text-sm">Activer edition</span>
+              <div className="flex flex-col">
+                <span className="text-sm">Amelioration audio (AudioSR)</span>
+                {!audiosrAvailable && (
+                  <span className="text-xs text-zinc-500">Module non installe/ desactive sur cette machine</span>
+                )}
+                {process.env.NODE_ENV === "development" && (
+                  <span className="text-xs text-zinc-400">
+                    AudioSR available: {String(audiosrStatus?.available)} · enabled: {String(audiosrStatus?.enabled)}
+                  </span>
+                )}
+              </div>
               <Switch
-                checked={uiState.post.edit_enabled}
+                checked={audiosrEnabled}
+                disabled={!audiosrAvailable}
+                onCheckedChange={(checked) => setAudiosrEnabled(checked)}
+              />
+            </label>
+            <div className={`grid gap-3 rounded-md border border-zinc-200 px-3 py-2 ${audiosrEnabled ? "" : "opacity-60"}`}>
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium">Steps</span>
+                <span className="font-mono text-xs text-zinc-500">{audiosrParams.ddim_steps}</span>
+              </div>
+              <Slider
+                value={[audiosrParams.ddim_steps]}
+                min={20}
+                max={250}
+                step={1}
+                disabled={!audiosrEnabled || !audiosrAvailable}
+                onValueChange={(vals) =>
+                  setAudiosrParams((prev) => ({
+                    ...prev,
+                    ddim_steps: vals[0],
+                  }))
+                }
+              />
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium">Guidance</span>
+                <span className="font-mono text-xs text-zinc-500">{audiosrParams.guidance_scale.toFixed(1)}</span>
+              </div>
+              <Slider
+                value={[audiosrParams.guidance_scale]}
+                min={1}
+                max={4}
+                step={0.1}
+                disabled={!audiosrEnabled || !audiosrAvailable}
+                onValueChange={(vals) =>
+                  setAudiosrParams((prev) => ({
+                    ...prev,
+                    guidance_scale: vals[0],
+                  }))
+                }
+              />
+              <div className="grid gap-2">
+                <label className="text-xs text-zinc-500">Seed</label>
+                <Input
+                  type="number"
+                  value={audiosrParams.seed}
+                  disabled={!audiosrEnabled || !audiosrAvailable}
+                  onChange={(event) =>
+                    setAudiosrParams((prev) => ({
+                      ...prev,
+                      seed: Number(event.target.value),
+                    }))
+                  }
+                />
+              </div>
+              <label className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2">
+                <span className="text-sm">Multiband ensemble</span>
+                <Switch
+                  checked={audiosrParams.multiband_ensemble}
+                  disabled={!audiosrEnabled || !audiosrAvailable}
+                  onCheckedChange={(checked) =>
+                    setAudiosrParams((prev) => ({
+                      ...prev,
+                      multiband_ensemble: checked,
+                    }))
+                  }
+                />
+              </label>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setAudiosrAdvancedOpen((prev) => !prev)}
+                disabled={!audiosrEnabled || !audiosrAvailable}
+              >
+                {audiosrAdvancedOpen ? "Masquer les options avancees" : "Options avancees"}
+              </Button>
+              {audiosrAdvancedOpen && (
+                <div className="grid gap-2">
+                  <label className="text-xs text-zinc-500">Chunk size</label>
+                  <Input
+                    type="number"
+                    value={audiosrParams.chunk_size}
+                    disabled={!audiosrEnabled || !audiosrAvailable}
+                    onChange={(event) =>
+                      setAudiosrParams((prev) => ({
+                        ...prev,
+                        chunk_size: Number(event.target.value),
+                      }))
+                    }
+                  />
+                  <label className="text-xs text-zinc-500">Overlap</label>
+                  <Input
+                    type="number"
+                    value={audiosrParams.overlap}
+                    disabled={!audiosrEnabled || !audiosrAvailable}
+                    onChange={(event) =>
+                      setAudiosrParams((prev) => ({
+                        ...prev,
+                        overlap: Number(event.target.value),
+                      }))
+                    }
+                  />
+                  <label className="text-xs text-zinc-500">Input cutoff</label>
+                  <Input
+                    type="number"
+                    value={audiosrParams.input_cutoff}
+                    disabled={!audiosrEnabled || !audiosrAvailable}
+                    onChange={(event) =>
+                      setAudiosrParams((prev) => ({
+                        ...prev,
+                        input_cutoff: Number(event.target.value),
+                      }))
+                    }
+                  />
+                </div>
+              )}
+            </div>
+            <label className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2">
+              <span className="text-sm">Trim silence</span>
+              <Switch
+                checked={uiState.post.trim_enabled}
                 onCheckedChange={(checked) =>
                   setUiState((prev) => ({
                     ...prev,
-                    post: { ...prev.post, edit_enabled: checked },
+                    post: { ...prev.post, trim_enabled: checked },
                   }))
                 }
               />
             </label>
-            <div className="grid gap-3 md:grid-cols-[1fr_1fr]">
-              <label className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2">
-                <span className="text-sm">Trim silence</span>
-                <Switch
-                  checked={uiState.post.trim_enabled}
-                  disabled={!uiState.post.edit_enabled}
-                  onCheckedChange={(checked) =>
-                    setUiState((prev) => ({
-                      ...prev,
-                      post: { ...prev.post, trim_enabled: checked },
-                    }))
-                  }
-                />
-              </label>
-              <label className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2">
-                <span className="text-sm">Normalize</span>
-                <Switch
-                  checked={uiState.post.normalize_enabled}
-                  disabled={!uiState.post.edit_enabled}
-                  onCheckedChange={(checked) =>
-                    setUiState((prev) => ({
-                      ...prev,
-                      post: { ...prev.post, normalize_enabled: checked },
-                    }))
-                  }
-                />
-              </label>
-            </div>
+            <label className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2">
+              <span className="text-sm">Normalize</span>
+              <Switch
+                checked={uiState.post.normalize_enabled}
+                onCheckedChange={(checked) =>
+                  setUiState((prev) => ({
+                    ...prev,
+                    post: { ...prev.post, normalize_enabled: checked },
+                  }))
+                }
+              />
+            </label>
             <div className="grid gap-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="font-medium">Target dBFS</span>
@@ -982,7 +1212,7 @@ export default function Home() {
                 min={-12}
                 max={0}
                 step={0.5}
-                disabled={!uiState.post.edit_enabled}
+                disabled={!uiState.post.normalize_enabled}
                 onValueChange={(vals) =>
                   setUiState((prev) => ({
                     ...prev,
@@ -992,30 +1222,38 @@ export default function Home() {
               />
             </div>
             <div className="flex items-center gap-2">
-              <Button onClick={handleEdit} disabled={!assetId || isEditing || !uiState.post.edit_enabled}>
-                {isEditing ? "Edition..." : "Editer"}
+              <Button onClick={handleEdit} disabled={!canApplyEdit}>
+                {isEditing ? "Edition..." : "Appliquer l'edition"}
               </Button>
               <Button
                 variant="outline"
                 onClick={() =>
-                  handleExport(editedAssetId, `vocalie-edition-${editedAssetId ?? "audio"}.wav`, setIsExportingEdited)
+                  handleExport(
+                    exportTargetId,
+                    `vocalie-edition-${exportTargetId ?? "audio"}.wav`,
+                    setIsExportingEdited,
+                  )
                 }
-                disabled={!editedAssetId || isExportingEdited}
+                disabled={!exportTargetId || isExportingEdited}
               >
-                {isExportingEdited ? "Export..." : "Exporter"}
+                {isExportingEdited ? "Export..." : "Exporter le fichier"}
               </Button>
               {editedPath && <span className="text-xs text-zinc-500">{editedPath}</span>}
             </div>
+            {editSummary && (
+              <div className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span>Sample rate: {editSummary.sample_rate ?? "--"} Hz</span>
+                  <span>Duree: {editSummary.duration_s ? `${editSummary.duration_s.toFixed(2)} s` : "--"}</span>
+                  {process.env.NODE_ENV === "development" && editedAssetId && <span>Asset: {editedAssetId}</span>}
+                </div>
+              </div>
+            )}
             {editedAudioHref && (
               <div className="rounded-md border border-zinc-200 bg-white p-3">
                 <Waveform src={editedAudioHref} />
                 <audio controls src={editedAudioHref} className="w-full" />
                 <p className="mt-2 text-xs text-zinc-500">Asset: {editedAssetId}</p>
-              </div>
-            )}
-            {editedMeta && (
-              <div className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600">
-                <pre className="whitespace-pre-wrap">{JSON.stringify(editedMeta, null, 2)}</pre>
               </div>
             )}
           </CardContent>
