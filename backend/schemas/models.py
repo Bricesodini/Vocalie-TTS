@@ -24,9 +24,15 @@ class InfoResponse(BaseModel):
     presets_dir: str
 
 
+class AudioSRStatus(BaseModel):
+    enabled: bool
+    available: bool
+
+
 class CapabilitiesResponse(BaseModel):
     engines: List[str]
     features: Dict[str, Any]
+    audiosr: Optional[AudioSRStatus] = None
 
 
 class EngineInfo(BaseModel):
@@ -276,6 +282,14 @@ class AudioEditResponse(BaseModel):
     edited_wav_path: str
     asset_id: Optional[str] = None
     metrics: Dict[str, Any]
+
+
+class AudioEnhanceResponse(BaseModel):
+    output_file: str
+    sample_rate: int
+    duration_s: float
+    asset_id: Optional[str] = None
+    engine: str
 
 
 class TTSJobRequest(BaseModel):

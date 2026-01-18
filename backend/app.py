@@ -15,6 +15,12 @@ from backend.services.work_service import clean_work_dir
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     clean_work_dir(WORK_DIR)
+    try:
+        from backend.services import audiosr_service
+
+        audiosr_service.log_audiosr_status()
+    except Exception:
+        pass
     yield
 
 

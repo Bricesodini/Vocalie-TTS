@@ -5,8 +5,10 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
+import backend.config as backend_config
 from backend.config import OUTPUT_DIR, PRESETS_DIR, WORK_DIR
-from backend.schemas.models import CapabilitiesResponse, InfoResponse
+from backend.schemas.models import AudioSRStatus, CapabilitiesResponse, InfoResponse
+from backend.services import audiosr_service
 from tts_backends import list_backends
 
 
@@ -40,4 +42,8 @@ def capabilities() -> CapabilitiesResponse:
         "editing_normalize": True,
         "export_formats": ["wav"],
     }
-    return CapabilitiesResponse(engines=engines, features=features)
+    audiosr_status = AudioSRStatus(
+        enabled=backend_config.VOCALIE_ENABLE_AUDIOSR,
+        available=audiosr_service.audiosr_is_available(),
+    )
+    return CapabilitiesResponse(engines=engines, features=features, audiosr=audiosr_status)
