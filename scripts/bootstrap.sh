@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 START_TS=$(date +%s)
 CORE_VENV="$ROOT_DIR/.venv"
 CHATTERBOX_VENV="$ROOT_DIR/.venvs/chatterbox"
+AUDIOSR_VENV="$ROOT_DIR/.venvs/audiosr"
 
 usage() {
   cat <<'EOF'
@@ -84,6 +85,30 @@ install_chatterbox() {
   deactivate || true
 }
 
+install_audiosr() {
+  local created=0
+  local lockfile="$ROOT_DIR/requirements-audiosr.lock.txt"
+  if [[ ! -d "$AUDIOSR_VENV" ]]; then
+    echo "Creating AudioSR venv at $AUDIOSR_VENV"
+    python3.11 -m venv "$AUDIOSR_VENV"
+    created=1
+  fi
+  # shellcheck disable=SC1091
+  source "$AUDIOSR_VENV/bin/activate"
+  if [[ "$created" -eq 1 || "$FORCE" -eq 1 ]]; then
+    echo "Installing AudioSR requirements"
+    pip install -U pip setuptools wheel
+    if [[ -f "$lockfile" ]]; then
+      pip install -r "$lockfile"
+    else
+      pip install -r "$ROOT_DIR/requirements-audiosr.in"
+    fi
+  else
+    echo "AudioSR venv exists; skipping install (use --force to reinstall)."
+  fi
+  deactivate || true
+}
+
 install_std_engines() {
   # shellcheck disable=SC1091
   source "$CORE_VENV/bin/activate"
@@ -121,6 +146,9 @@ case "$MODE" in
     require_python
     install_core
     install_chatterbox
+    if [[ "${VOCALIE_ENABLE_AUDIOSR:-0}" == "1" ]]; then
+      install_audiosr
+    fi
     run_smoke
     ;;
   std)
@@ -129,12 +157,18 @@ case "$MODE" in
     install_chatterbox
     install_std_engines
     install_bark
+    if [[ "${VOCALIE_ENABLE_AUDIOSR:-0}" == "1" ]]; then
+      install_audiosr
+    fi
     run_smoke
     ;;
   bark)
     require_python
     install_core
     install_bark
+    if [[ "${VOCALIE_ENABLE_AUDIOSR:-0}" == "1" ]]; then
+      install_audiosr
+    fi
     run_smoke
     ;;
   clean)

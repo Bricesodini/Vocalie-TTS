@@ -1,0 +1,7 @@
+git+https://github.com/haoheliu/versatile_audio_super_resolution@d312fbab9f0e94087d9f2802d03cf184353cc805
+cog
+pyloudnorm
+torch
+torchaudio
+soundfile
+librosa

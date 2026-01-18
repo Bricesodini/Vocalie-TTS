@@ -30,6 +30,21 @@ if [[ "${WITH_CHATTERBOX:-0}" == "1" ]]; then
   "$ROOT_DIR/scripts/install-chatterbox-venv.sh"
 fi
 
+if [[ "${VOCALIE_ENABLE_AUDIOSR:-0}" == "1" ]]; then
+  echo "Installing AudioSR isolated venv"
+  "$ROOT_DIR/scripts/install-audiosr-venv.sh"
+  AUDIOSR_PY="$ROOT_DIR/.venvs/audiosr/bin/python"
+  if [[ -x "$AUDIOSR_PY" ]]; then
+    if ! "$AUDIOSR_PY" -c "import cog, pyloudnorm; print('ok')"; then
+      echo "AudioSR import failed in isolated venv ($AUDIOSR_PY)" >&2
+      exit 1
+    fi
+  else
+    echo "AudioSR python missing at $AUDIOSR_PY" >&2
+    exit 1
+  fi
+fi
+
 API_PORT="${API_PORT:-8000}"
 API_HOST="${API_HOST:-127.0.0.1}"
 
