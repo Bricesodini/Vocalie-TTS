@@ -22,7 +22,7 @@ Vocalie-TTS s'adresse aux createurs audio/video qui recherchent :
 - Post-traitement audio optionnel :
   - nettoyage des silences en debut et fin
   - normalisation du niveau sonore (dBFS)
-- Amelioration audio optionnelle (AudioSR) :
+- Amelioration audio (AudioSR) :
   - mode studio (plus lent)
   - parametres reglables (steps, guidance, seed, chunking)
 
@@ -113,9 +113,8 @@ Ouvrir ensuite :
 - Frontend : http://localhost:3000
 - API : http://127.0.0.1:8000
 
-Option AudioSR (amelioration audio) :
+AudioSR (amelioration audio) est installe par defaut via bootstrap.
 ```bash
-export VOCALIE_ENABLE_AUDIOSR=1
 ./scripts/install-audiosr-venv.sh
 ```
 
@@ -141,9 +140,8 @@ Le frontend utilise `npm ci` avec un lockfile Linux-only (CI stricte).
 ./scripts/bootstrap.sh min
 ```
 
-AudioSR (optionnel) :
+AudioSR (installe par defaut) :
 ```bash
-export VOCALIE_ENABLE_AUDIOSR=1
 ./scripts/install-audiosr-venv.sh
 ```
 
@@ -183,10 +181,7 @@ Option GPU Nvidia :
 setx VOCALIE_ENABLE_CUDA 1
 ```
 
-Option AudioSR :
-```powershell
-setx VOCALIE_ENABLE_AUDIOSR 1
-```
+AudioSR est installe par defaut via bootstrap.
 
 ---
 
@@ -238,7 +233,7 @@ Automatiser ce qui est repetitif, garder explicite ce qui influence le son.
 - Python :
 - `requirements.lock.txt`
 - `requirements-chatterbox.lock.txt`
-- `requirements-audiosr.lock.txt` (optionnel)
+- `requirements-audiosr.lock.txt`
 - Generation :
 ```bash
 ./scripts/lock-requirements.sh
@@ -297,7 +292,7 @@ curl -X POST http://127.0.0.1:8000/v1/tts/jobs \
 - XTTS sur macOS -> CPU only (comportement attendu)
 - Probleme Hugging Face gated model -> verifier `HUGGINGFACE_TOKEN`
 - `Module not found` frontend -> `rm -rf node_modules && npm install`
-- AudioSR n'apparait pas dans le frontend -> verifier `GET /v1/capabilities` et que `VOCALIE_ENABLE_AUDIOSR=1` est bien defini pour le backend
+- AudioSR n'apparait pas dans le frontend -> verifier `GET /v1/capabilities` et que la venv AudioSR est installee
 - Premier run AudioSR lent -> telechargement des poids (cache Hugging Face), comportement attendu
 
 ---

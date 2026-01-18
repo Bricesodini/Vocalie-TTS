@@ -146,9 +146,7 @@ case "$MODE" in
     require_python
     install_core
     install_chatterbox
-    if [[ "${VOCALIE_ENABLE_AUDIOSR:-0}" == "1" ]]; then
-      install_audiosr
-    fi
+    install_audiosr
     run_smoke
     ;;
   std)
@@ -157,18 +155,14 @@ case "$MODE" in
     install_chatterbox
     install_std_engines
     install_bark
-    if [[ "${VOCALIE_ENABLE_AUDIOSR:-0}" == "1" ]]; then
-      install_audiosr
-    fi
+    install_audiosr
     run_smoke
     ;;
   bark)
     require_python
     install_core
     install_bark
-    if [[ "${VOCALIE_ENABLE_AUDIOSR:-0}" == "1" ]]; then
-      install_audiosr
-    fi
+    install_audiosr
     run_smoke
     ;;
   clean)
