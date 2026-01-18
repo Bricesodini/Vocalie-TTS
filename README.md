@@ -57,6 +57,7 @@ Le frontend (Next.js) et Gradio sont deux clients distincts de cette API.
 - [Presentation](#presentation)
 - [Architecture](#architecture)
 - [Objectifs](#objectifs)
+- [Migration AudioSR](#migration-audiosr)
 - [Quickstart](#quickstart)
 - [Installation par plateforme](#installation-par-plateforme)
 - [Voix et references](#voix-et-references)
@@ -65,6 +66,12 @@ Le frontend (Next.js) et Gradio sont deux clients distincts de cette API.
 - [Troubleshooting](#troubleshooting)
 - [Scripts](#scripts-optionnel)
 - [Licence](#licence)
+
+---
+
+## Migration AudioSR
+
+La migration AudioSR est developpee sur la branche `feature/audiosr-migration` afin de garder `main` stable.
 
 ---
 
