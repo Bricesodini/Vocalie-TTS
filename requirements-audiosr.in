@@ -3,6 +3,7 @@ cog
 pyloudnorm
 torch
 torchaudio
+torchcodec
 soundfile
 librosa
 matplotlib

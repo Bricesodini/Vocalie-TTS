@@ -8,6 +8,7 @@ from .base import TTSBackend
 from .bark_backend import BarkBackend
 from .chatterbox_backend import ChatterboxBackend
 from .piper_backend import PiperBackend
+from .qwen3_backend import Qwen3Backend
 from .xtts_backend import XTTSBackend
 
 
@@ -16,6 +17,7 @@ BACKENDS: List[type[TTSBackend]] = [
     XTTSBackend,
     PiperBackend,
     BarkBackend,
+    Qwen3Backend,
 ]
 
 

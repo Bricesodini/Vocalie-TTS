@@ -61,6 +61,7 @@ export type UIStateDirection = {
 export type UIStateEngine = {
   engine_id: string;
   voice_id?: string | null;
+  language?: string | null;
   params: Record<string, unknown>;
   chatterbox_gap_ms: number;
 };

@@ -118,6 +118,7 @@ class UIStateDirection(BaseModel):
 class UIStateEngine(BaseModel):
     engine_id: str = ""
     voice_id: Optional[str] = None
+    language: Optional[str] = None
     params: Dict[str, Any] = Field(default_factory=dict)
     chatterbox_gap_ms: int = 0
 

@@ -32,7 +32,7 @@ else
 fi
 
 echo "Checking AudioSR dependencies..."
-"$VENV_DIR/bin/python" -c "import cog, pyloudnorm, matplotlib; print('deps ok')"
+"$VENV_DIR/bin/python" -c "import cog, pyloudnorm, matplotlib, torchcodec; print('deps ok')"
 "$VENV_DIR/bin/python" -c "import librosa, soundfile; print('audio io ok')"
 "$VENV_DIR/bin/python" -c "import sys; print(sys.version)"
 

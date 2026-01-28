@@ -157,6 +157,10 @@ def run_tts_job(
         chatterbox_mode = "fr_finetune"
     elif engine == "xtts_v2":
         backend_id = "xtts"
+    elif engine == "qwen3_custom":
+        backend_id = "qwen3"
+    elif engine == "qwen3_clone":
+        backend_id = "qwen3"
     if backend_id == "bark":
         direction_enabled = False
 
@@ -195,6 +199,10 @@ def run_tts_job(
     engine_params.pop("inter_chunk_gap_ms", None)
     if chatterbox_mode:
         engine_params.setdefault("chatterbox_mode", chatterbox_mode)
+    if engine == "qwen3_custom":
+        engine_params["qwen3_mode"] = "custom_voice"
+    elif engine == "qwen3_clone":
+        engine_params["qwen3_mode"] = "voice_clone"
 
     voice_ref_path = None
     if voice:

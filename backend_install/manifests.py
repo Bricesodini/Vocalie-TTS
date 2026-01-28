@@ -62,6 +62,18 @@ MANIFESTS: Dict[str, BackendManifest] = {
         import_probes=["bark"],
         post_install_checks=[["-c", "import bark; print('OK')"]],
     ),
+    "qwen3": BackendManifest(
+        engine_id="qwen3",
+        python="python3.11",
+        pip_packages=[
+            "qwen-tts==0.0.4",
+            "torch",
+            "torchaudio",
+        ],
+        system_hints=["ffmpeg (optionnel)"],
+        import_probes=["qwen_tts"],
+        post_install_checks=[["-c", "import qwen_tts; print('OK')"]],
+    ),
 }
 
 

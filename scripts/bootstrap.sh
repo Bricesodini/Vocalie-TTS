@@ -114,6 +114,7 @@ install_std_engines() {
   source "$CORE_VENV/bin/activate"
   python -c "from backend_install.installer import run_install; print(run_install('xtts'))"
   python -c "from backend_install.installer import run_install; print(run_install('piper'))"
+  python -c "from backend_install.installer import run_install; print(run_install('qwen3'))"
   deactivate || true
 }
 

@@ -55,6 +55,11 @@ def get_engine_slug(engine_id: str, engine_meta: dict | None = None) -> str:
         return "piper"
     if engine_id == "bark":
         return "bark"
+    if engine_id == "qwen3":
+        mode = engine_meta.get("qwen3_mode")
+        if mode:
+            return slugify(f"qwen3_{mode}", fallback="qwen3")
+        return "qwen3"
     return slugify(engine_id, fallback="tts")
 
 

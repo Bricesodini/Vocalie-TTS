@@ -59,6 +59,18 @@ ENGINE_CATALOG = [
         "backend_id": "bark",
         "supports_ref": False,
     },
+    {
+        "id": "qwen3_custom",
+        "label": "Qwen3 (CustomVoice/Design)",
+        "backend_id": "qwen3",
+        "supports_ref": False,
+    },
+    {
+        "id": "qwen3_clone",
+        "label": "Qwen3 (Voice clone)",
+        "backend_id": "qwen3",
+        "supports_ref": True,
+    },
 ]
 
 
@@ -218,6 +230,10 @@ def create_job(http_request: Request, request: TTSJobRequest) -> JobCreateRespon
         options.setdefault("chatterbox_mode", "multilang")
     elif request.engine == "chatterbox_finetune_fr" or engine_id == "chatterbox_finetune_fr":
         options.setdefault("chatterbox_mode", "fr_finetune")
+    elif request.engine == "qwen3_custom" or engine_id == "qwen3_custom":
+        options["qwen3_mode"] = "custom_voice"
+    elif request.engine == "qwen3_clone" or engine_id == "qwen3_clone":
+        options["qwen3_mode"] = "voice_clone"
     if request.voice_id and not meta["supports_ref"]:
         options.setdefault("voice_id", request.voice_id)
 

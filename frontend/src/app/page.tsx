@@ -43,6 +43,20 @@ import type {
 } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 700;
+const LANGUAGE_OPTIONS = [
+  { value: "fr-FR", label: "Francais (fr-FR)" },
+  { value: "en-US", label: "English (en-US)" },
+  { value: "es-ES", label: "Espanol (es-ES)" },
+  { value: "de-DE", label: "Deutsch (de-DE)" },
+  { value: "it-IT", label: "Italiano (it-IT)" },
+  { value: "pt-PT", label: "Portugues (pt-PT)" },
+  { value: "nl-NL", label: "Nederlands (nl-NL)" },
+  { value: "ja-JP", label: "Japanese (ja-JP)" },
+  { value: "ko-KR", label: "Korean (ko-KR)" },
+  { value: "zh-CN", label: "Chinese (zh-CN)" },
+  { value: "zh-TW", label: "Chinese (zh-TW)" },
+  { value: "ru-RU", label: "Russian (ru-RU)" },
+];
 
 const EMPTY_STATE: UIState = {
   preparation: {
@@ -62,6 +76,7 @@ const EMPTY_STATE: UIState = {
   engine: {
     engine_id: "",
     voice_id: null,
+    language: "fr-FR",
     params: {},
     chatterbox_gap_ms: 0,
   },
@@ -374,6 +389,7 @@ export default function Home() {
             }
             return {
               ...prev.engine,
+              language: prev.engine.language ?? "fr-FR",
               params: nextParams,
               chatterbox_gap_ms: prev.engine.chatterbox_gap_ms ?? gapDefault,
             };
@@ -389,6 +405,16 @@ export default function Home() {
     return () => {
       active = false;
     };
+  }, [uiState.engine.engine_id]);
+
+  useEffect(() => {
+    setUiState((prev) => {
+      if (prev.engine.language && prev.engine.language !== "") return prev;
+      return {
+        ...prev,
+        engine: { ...prev.engine, language: "fr-FR" },
+      };
+    });
   }, [uiState.engine.engine_id]);
 
   useEffect(() => {
@@ -548,6 +574,7 @@ export default function Home() {
       const payload = {
         engine_id: uiState.engine.engine_id,
         voice_id: supportsRef ? uiState.engine.voice_id : null,
+        language: uiState.engine.language,
         text_source: textSnapshot ? "snapshot" : "interpreted",
         text_raw: uiState.preparation.text_raw,
         text_adjusted: uiState.preparation.text_adjusted,
@@ -926,7 +953,13 @@ export default function Home() {
                   onValueChange={(value) =>
                     setUiState((prev) => ({
                       ...prev,
-                      engine: { ...prev.engine, engine_id: value, params: {}, voice_id: null },
+                      engine: {
+                        ...prev.engine,
+                        engine_id: value,
+                        params: {},
+                        voice_id: null,
+                        language: prev.engine.language ?? "fr-FR",
+                      },
                     }))
                   }
                 >
@@ -967,6 +1000,29 @@ export default function Home() {
                   </Select>
                 </div>
               )}
+              <div className="grid gap-2">
+                <label className="text-sm font-medium">Langue</label>
+                <Select
+                  value={uiState.engine.language ?? "fr-FR"}
+                  onValueChange={(value) =>
+                    setUiState((prev) => ({
+                      ...prev,
+                      engine: { ...prev.engine, language: value },
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choisir une langue" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LANGUAGE_OPTIONS.map((lang) => (
+                      <SelectItem key={lang.value} value={lang.value}>
+                        {lang.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             {engineFieldList.length > 0 && (
               <DynamicFields

@@ -98,6 +98,7 @@ tokenizers==0.13.3
 tomlkit==0.13.3
 torch==2.9.1
 torchaudio==2.9.1
+torchcodec==0.9.1
 torchlibrosa==0.1.0
 torchvision==0.24.1
 tqdm==4.67.1
