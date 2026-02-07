@@ -136,3 +136,26 @@ def test_job_accepts_bark_without_voice(api_client, monkeypatch, tmp_path):
         },
     )
     assert resp.status_code == 200
+
+
+def test_qwen3_gap_forwarded_to_pipeline(api_client, monkeypatch):
+    captured = {}
+
+    def fake_create_job(payload):
+        captured["payload"] = payload
+        return {"job_id": "job_test", "status": "queued"}
+
+    monkeypatch.setattr(job_service.JOB_STORE, "create_job", fake_create_job)
+
+    resp = api_client.post(
+        "/v1/tts/jobs",
+        json={
+            "text": "Bonjour",
+            "engine": "qwen3_custom",
+            "post_params": {"chunk_gap_ms": 250},
+            "direction": {"enabled": True},
+        },
+    )
+    assert resp.status_code == 200
+    assert captured["payload"]["engine"] == "qwen3_custom"
+    assert captured["payload"]["options"]["inter_chunk_gap_ms"] == 250

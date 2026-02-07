@@ -21,7 +21,7 @@
       "engine_id": "piper",
       "voice_id": null,
       "params": {},
-      "chatterbox_gap_ms": 0
+      "chunk_gap_ms": 0
     },
     "post": {
       "edit_enabled": false,

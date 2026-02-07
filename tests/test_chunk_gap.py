@@ -77,6 +77,13 @@ def test_inter_chunk_gap_single_chunk_no_change(monkeypatch, tmp_path):
     assert abs(len(audio) - sr) < 10
 
 
+def test_inter_chunk_gap_applies_for_qwen3(monkeypatch, tmp_path):
+    audio, sr = _run_pipeline(monkeypatch, tmp_path, engine_id="qwen3", chunks=3, gap_ms=200)
+    assert sr == 24000
+    expected = (3 * sr) + int(0.4 * sr)
+    assert abs(len(audio) - expected) < 100
+
+
 def test_inter_chunk_gap_forced_zero_non_chatterbox(monkeypatch, tmp_path):
     audio, sr = _run_pipeline(monkeypatch, tmp_path, engine_id="xtts", chunks=3, gap_ms=200)
     assert sr == 24000

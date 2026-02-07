@@ -29,6 +29,7 @@ def api_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     (ref_dir / "voice.wav").write_bytes(b"RIFF0000WAVEfmt ")
 
     monkeypatch.setenv("CHATTERBOX_REF_DIR", str(ref_dir))
+    monkeypatch.setenv("VOCALIE_API_KEY", "test-api-key")
 
     monkeypatch.setattr(backend_config, "WORK_DIR", work_dir, raising=False)
     monkeypatch.setattr(backend_config, "OUTPUT_DIR", output_dir, raising=False)
@@ -47,4 +48,4 @@ def api_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
     monkeypatch.setattr(preset_service, "PRESETS_DIR", presets_dir, raising=False)
 
-    return TestClient(backend_app.app)
+    return TestClient(backend_app.app, headers={"X-API-Key": "test-api-key"})

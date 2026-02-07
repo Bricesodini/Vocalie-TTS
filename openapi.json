@@ -795,6 +795,44 @@
           }
         }
       }
+    },
+    "/v1/audio/enhance": {
+      "post": {
+        "summary": "Enhance Audio",
+        "operationId": "enhance_audio_v1_audio_enhance_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_enhance_audio_v1_audio_enhance_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AudioEnhanceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -984,6 +1022,117 @@
         ],
         "title": "AudioEditResponse"
       },
+      "AudioEnhanceResponse": {
+        "properties": {
+          "output_file": {
+            "type": "string",
+            "title": "Output File"
+          },
+          "sample_rate": {
+            "type": "integer",
+            "title": "Sample Rate"
+          },
+          "duration_s": {
+            "type": "number",
+            "title": "Duration S"
+          },
+          "asset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Id"
+          },
+          "engine": {
+            "type": "string",
+            "title": "Engine"
+          }
+        },
+        "type": "object",
+        "required": [
+          "output_file",
+          "sample_rate",
+          "duration_s",
+          "engine"
+        ],
+        "title": "AudioEnhanceResponse"
+      },
+      "AudioSRStatus": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled",
+          "available"
+        ],
+        "title": "AudioSRStatus"
+      },
+      "Body_enhance_audio_v1_audio_enhance_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          },
+          "engine": {
+            "type": "string",
+            "title": "Engine",
+            "default": "audiosr"
+          },
+          "ddim_steps": {
+            "type": "integer",
+            "title": "Ddim Steps",
+            "default": 100
+          },
+          "guidance_scale": {
+            "type": "number",
+            "title": "Guidance Scale",
+            "default": 2.5
+          },
+          "seed": {
+            "type": "integer",
+            "title": "Seed",
+            "default": 0
+          },
+          "chunk_size": {
+            "type": "integer",
+            "title": "Chunk Size",
+            "default": 32768
+          },
+          "overlap": {
+            "type": "integer",
+            "title": "Overlap",
+            "default": 1024
+          },
+          "multiband_ensemble": {
+            "type": "boolean",
+            "title": "Multiband Ensemble",
+            "default": false
+          },
+          "input_cutoff": {
+            "type": "integer",
+            "title": "Input Cutoff",
+            "default": 8000
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_enhance_audio_v1_audio_enhance_post"
+      },
       "CapabilitiesResponse": {
         "properties": {
           "engines": {
@@ -997,6 +1146,16 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Features"
+          },
+          "audiosr": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AudioSRStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -2405,14 +2564,25 @@
             ],
             "title": "Voice Id"
           },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
           "params": {
             "additionalProperties": true,
             "type": "object",
             "title": "Params"
           },
-          "chatterbox_gap_ms": {
+          "chunk_gap_ms": {
             "type": "integer",
-            "title": "Chatterbox Gap Ms",
+            "title": "Chunk Gap Ms",
             "default": 0
           }
         },

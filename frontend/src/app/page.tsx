@@ -18,9 +18,12 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { apiDelete, apiGet, apiPost, apiPut, assetUrl, fetchVoices } from "@/lib/api";
+import { apiDelete, apiGet, apiPost, apiPostForm, apiPut, assetUrl, fetchVoices } from "@/lib/api";
 import type {
+  AssetMetaResponse,
   AudioEditResponse,
+  AudioEnhanceResponse,
+  CapabilitiesResponse,
   ChunkMarkerResponse,
   ChunkPreviewResponse,
   ChunkSnapshotResponse,
@@ -40,6 +43,114 @@ import type {
 } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 700;
+const LANGUAGE_OPTIONS = [
+  { value: "fr-FR", label: "Francais (fr-FR)" },
+  { value: "en-US", label: "English (en-US)" },
+  { value: "es-ES", label: "Espanol (es-ES)" },
+  { value: "de-DE", label: "Deutsch (de-DE)" },
+  { value: "it-IT", label: "Italiano (it-IT)" },
+  { value: "pt-PT", label: "Portugues (pt-PT)" },
+  { value: "nl-NL", label: "Nederlands (nl-NL)" },
+  { value: "ja-JP", label: "Japanese (ja-JP)" },
+  { value: "ko-KR", label: "Korean (ko-KR)" },
+  { value: "zh-CN", label: "Chinese (zh-CN)" },
+  { value: "zh-TW", label: "Chinese (zh-TW)" },
+  { value: "ru-RU", label: "Russian (ru-RU)" },
+];
+const VOICE_DESIGN_PRESETS = [
+  {
+    id: "fr_news_m",
+    label: "Journal TV FR (masculin)",
+    instruct:
+      "Voix masculine adulte, timbre clair, pitch moyen-bas, debit soutenu, volume fort, accent francais neutre. Ton autoritaire, confiant et informatif.",
+  },
+  {
+    id: "fr_story_f",
+    label: "Narration douce FR (feminin)",
+    instruct:
+      "Voix feminine adulte, timbre doux, pitch moyen, debit moyen, volume modere, accent francais neutre. Ton chaleureux et rassurant.",
+  },
+  {
+    id: "fr_angry_m",
+    label: "Colere FR (masculin)",
+    instruct:
+      "Voix masculine adulte, timbre rauque, pitch moyen-bas, debit rapide, volume fort. Emotion colerique, ton tranchant et percutant.",
+  },
+  {
+    id: "fr_young_f",
+    label: "Jeune adulte FR (feminin)",
+    instruct:
+      "Voix feminine jeune adulte, pitch moyen-haut, debit rapide, volume normal, accent francais neutre. Ton enjoue et expressif.",
+  },
+  {
+    id: "fr_senior_m",
+    label: "Senior FR (masculin)",
+    instruct:
+      "Voix masculine senior, pitch bas, debit lent, volume modere, accent francais neutre. Ton grave et pose.",
+  },
+];
+const VOICE_DESIGN_OPTIONS = {
+  gender: [
+    { value: "none", label: "Neutre" },
+    { value: "masculine", label: "Masculin" },
+    { value: "feminine", label: "Feminin" },
+  ],
+  age: [
+    { value: "none", label: "Neutre" },
+    { value: "teen", label: "Ado" },
+    { value: "young_adult", label: "Jeune adulte" },
+    { value: "adult", label: "Adulte" },
+    { value: "senior", label: "Senior" },
+  ],
+  pitch: [
+    { value: "none", label: "Neutre" },
+    { value: "low", label: "Bas" },
+    { value: "mid", label: "Moyen" },
+    { value: "high", label: "Haut" },
+  ],
+  speed: [
+    { value: "none", label: "Neutre" },
+    { value: "slow", label: "Lent" },
+    { value: "medium", label: "Normal" },
+    { value: "fast", label: "Rapide" },
+  ],
+  volume: [
+    { value: "none", label: "Neutre" },
+    { value: "soft", label: "Faible" },
+    { value: "normal", label: "Normal" },
+    { value: "loud", label: "Fort" },
+  ],
+  accent: [
+    { value: "none", label: "Neutre" },
+    { value: "fr_neutral", label: "Francais neutre" },
+    { value: "fr_paris", label: "Francais parisien" },
+    { value: "fr_quebec", label: "Francais quebecois" },
+    { value: "fr_belgium", label: "Francais belge" },
+    { value: "fr_swiss", label: "Francais suisse" },
+  ],
+  emotion: [
+    { value: "none", label: "Neutre" },
+    { value: "happy", label: "Joyeux" },
+    { value: "sad", label: "Triste" },
+    { value: "angry", label: "Colere" },
+    { value: "excited", label: "Excite" },
+    { value: "calm", label: "Calme" },
+  ],
+  texture: [
+    { value: "none", label: "Neutre" },
+    { value: "clear", label: "Claire" },
+    { value: "warm", label: "Chaleureuse" },
+    { value: "raspy", label: "Rauque" },
+    { value: "nasal", label: "Nasale" },
+  ],
+  style: [
+    { value: "none", label: "Neutre" },
+    { value: "conversational", label: "Conversationnel" },
+    { value: "narrative", label: "Narratif" },
+    { value: "authoritative", label: "Autoritaire" },
+    { value: "dramatic", label: "Dramatique" },
+  ],
+};
 
 const EMPTY_STATE: UIState = {
   preparation: {
@@ -59,8 +170,9 @@ const EMPTY_STATE: UIState = {
   engine: {
     engine_id: "",
     voice_id: null,
+    language: "fr-FR",
     params: {},
-    chatterbox_gap_ms: 0,
+    chunk_gap_ms: 0,
   },
   post: {
     edit_enabled: false,
@@ -202,6 +314,7 @@ export default function Home() {
   const [engines, setEngines] = useState<EngineInfo[]>([]);
   const [voices, setVoices] = useState<VoiceInfo[]>([]);
   const [engineSchema, setEngineSchema] = useState<EngineSchemaResponse | null>(null);
+  const [schemaRefreshNonce, setSchemaRefreshNonce] = useState(0);
   const [presets, setPresets] = useState<PresetListItem[]>([]);
   const [selectedPreset, setSelectedPreset] = useState<string>("");
   const [presetId, setPresetId] = useState<string>("");
@@ -216,12 +329,27 @@ export default function Home() {
   const [editedPath, setEditedPath] = useState<string | null>(null);
   const [editedAssetId, setEditedAssetId] = useState<string | null>(null);
   const [editedAudioHref, setEditedAudioHref] = useState<string | null>(null);
-  const [editedMeta, setEditedMeta] = useState<Record<string, unknown> | null>(null);
+  const [editSummary, setEditSummary] = useState<{ sample_rate?: number | null; duration_s?: number | null } | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [editProgress, setEditProgress] = useState(0);
   const [isExporting, setIsExporting] = useState(false);
   const [isExportingEdited, setIsExportingEdited] = useState(false);
+  const [audiosrStatus, setAudiosrStatus] = useState<{ enabled: boolean; available: boolean } | null>(null);
+  const [audiosrEnabled, setAudiosrEnabled] = useState(false);
+  const [audiosrParams, setAudiosrParams] = useState({
+    ddim_steps: 100,
+    guidance_scale: 2.5,
+    seed: 0,
+    multiband_ensemble: false,
+    chunk_size: 32768,
+    overlap: 1024,
+    input_cutoff: 8000,
+  });
+  const [audiosrAdvancedOpen, setAudiosrAdvancedOpen] = useState(false);
 
   const supportsRef = useMemo(() => {
     const engine = engines.find((item) => item.id === uiState.engine.engine_id);
@@ -241,15 +369,168 @@ export default function Home() {
     return !isGenerating;
   }, [uiState, supportsRef, engineAvailable, isGenerating]);
 
+  const audiosrAvailable = audiosrStatus?.available ?? false;
+  const canApplyEdit = Boolean(assetId && !isEditing);
+  const exportTargetId = editedAssetId ?? assetId;
+
+  const isQwen3Custom = uiState.engine.engine_id === "qwen3_custom";
+  const isQwen3VoiceDesign = isQwen3Custom && uiState.engine.params?.qwen3_mode === "voice_design";
+
   const engineFieldList = useMemo(() => {
     const baseFields = engineFields(engineSchema?.fields ?? []);
     if (!uiState.engine.engine_id) {
       return baseFields;
     }
     const special = ["chatterbox_native", "chatterbox_finetune_fr"];
-    return baseFields.filter((field) => !(field.key === "chatterbox_mode" && special.includes(uiState.engine.engine_id)));
-  }, [engineSchema, uiState.engine.engine_id]);
+    return baseFields.filter((field) => {
+      if (field.key === "chatterbox_mode" && special.includes(uiState.engine.engine_id)) {
+        return false;
+      }
+      if (isQwen3VoiceDesign && field.key === "instruct") {
+        return false;
+      }
+      return true;
+    });
+  }, [engineSchema, uiState.engine.engine_id, isQwen3VoiceDesign]);
   const postFieldList = postFields(engineSchema?.fields ?? []);
+
+  function updateEngineParam(key: string, value: unknown) {
+    setUiState((prev) => ({
+      ...prev,
+      engine: {
+        ...prev.engine,
+        params: { ...prev.engine.params, [key]: value },
+      },
+    }));
+  }
+
+  function buildVoiceDesignInstruction(params: Record<string, unknown>, language?: string | null) {
+    const genderMap: Record<string, string> = {
+      masculine: "Voix masculine",
+      feminine: "Voix feminine",
+    };
+    const ageMap: Record<string, string> = {
+      teen: "ado",
+      young_adult: "jeune adulte",
+      adult: "adulte",
+      senior: "senior",
+    };
+    const pitchMap: Record<string, string> = {
+      low: "pitch bas",
+      mid: "pitch moyen",
+      high: "pitch haut",
+    };
+    const speedMap: Record<string, string> = {
+      slow: "debit lent",
+      medium: "debit normal",
+      fast: "debit rapide",
+    };
+    const volumeMap: Record<string, string> = {
+      soft: "volume faible",
+      normal: "volume normal",
+      loud: "volume fort",
+    };
+    const accentMap: Record<string, string> = {
+      fr_neutral: "accent francais neutre",
+      fr_paris: "accent francais parisien",
+      fr_quebec: "accent francais quebecois",
+      fr_belgium: "accent francais belge",
+      fr_swiss: "accent francais suisse",
+    };
+    const emotionMap: Record<string, string> = {
+      happy: "emotion joyeuse",
+      sad: "emotion triste",
+      angry: "emotion colerique",
+      excited: "emotion enthousiaste",
+      calm: "emotion calme",
+    };
+    const textureMap: Record<string, string> = {
+      clear: "timbre clair",
+      warm: "timbre chaleureux",
+      raspy: "timbre rauque",
+      nasal: "timbre nasal",
+    };
+    const styleMap: Record<string, string> = {
+      conversational: "ton conversationnel",
+      narrative: "ton narratif",
+      authoritative: "ton autoritaire",
+      dramatic: "ton dramatique",
+    };
+
+    const parts: string[] = [];
+    if (language && language.startsWith("fr")) {
+      parts.push("Parle en francais");
+    }
+    const genderKey = String(params.design_gender || "");
+    const gender = genderMap[genderKey === "none" ? "" : genderKey];
+    if (gender) parts.push(gender);
+    const ageKey = String(params.design_age || "");
+    const age = ageMap[ageKey === "none" ? "" : ageKey];
+    if (age) parts.push(age);
+    const textureKey = String(params.design_texture || "");
+    const texture = textureMap[textureKey === "none" ? "" : textureKey];
+    if (texture) parts.push(texture);
+    const pitchKey = String(params.design_pitch || "");
+    const pitch = pitchMap[pitchKey === "none" ? "" : pitchKey];
+    if (pitch) parts.push(pitch);
+    const speedKey = String(params.design_speed || "");
+    const speed = speedMap[speedKey === "none" ? "" : speedKey];
+    if (speed) parts.push(speed);
+    const volumeKey = String(params.design_volume || "");
+    const volume = volumeMap[volumeKey === "none" ? "" : volumeKey];
+    if (volume) parts.push(volume);
+    const accentKey = String(params.design_accent || "");
+    const accent = accentMap[accentKey === "none" ? "" : accentKey];
+    if (accent) {
+      parts.push(accent);
+    } else if (language && language.startsWith("fr")) {
+      parts.push("accent francais neutre");
+    }
+    const emotionKey = String(params.design_emotion || "");
+    const emotion = emotionMap[emotionKey === "none" ? "" : emotionKey];
+    if (emotion) parts.push(emotion);
+    const styleKey = String(params.design_style || "");
+    const style = styleMap[styleKey === "none" ? "" : styleKey];
+    if (style) parts.push(style);
+    if (parts.length === 0) return "";
+    return parts.join(", ") + ".";
+  }
+
+  const [voiceDesignPresets, setVoiceDesignPresets] = useState<
+    Array<{ id: string; label: string; instruct: string; options: Record<string, unknown> }>
+  >([]);
+  const [voiceDesignPresetId, setVoiceDesignPresetId] = useState("none");
+  const [voiceDesignPresetName, setVoiceDesignPresetName] = useState("");
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("voiceDesignPresets");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setVoiceDesignPresets(parsed);
+      }
+    } catch {
+      // ignore corrupt localStorage
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("voiceDesignPresets", JSON.stringify(voiceDesignPresets));
+    } catch {
+      // ignore write errors
+    }
+  }, [voiceDesignPresets]);
+
+  useEffect(() => {
+    if (!isQwen3VoiceDesign) return;
+    const lang = uiState.engine.language || "";
+    const accent = String(uiState.engine.params?.design_accent ?? "");
+    if (lang.startsWith("fr") && (!accent || accent === "none")) {
+      updateEngineParam("design_accent", "fr_neutral");
+    }
+  }, [isQwen3VoiceDesign, uiState.engine.language]);
 
   useEffect(() => {
     let active = true;
@@ -275,6 +556,38 @@ export default function Home() {
       active = false;
     };
   }, [uiState.engine.engine_id]);
+
+  useEffect(() => {
+    let active = true;
+    async function loadCapabilities() {
+      try {
+        const data = await apiGet<CapabilitiesResponse>("/v1/capabilities");
+        if (!active) return;
+        const audiosr = data.audiosr ?? null;
+        const normalized = {
+          enabled: Boolean(audiosr?.enabled),
+          available: Boolean(audiosr?.available),
+        };
+        if (process.env.NODE_ENV === "development") {
+          console.log("capabilities", data);
+        }
+        setAudiosrStatus(normalized);
+      } catch (err) {
+        if (!active) return;
+        setAudiosrStatus({ enabled: false, available: false });
+      }
+    }
+    loadCapabilities();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!audiosrAvailable) {
+      setAudiosrEnabled(false);
+    }
+  }, [audiosrAvailable]);
 
   useEffect(() => {
     let active = true;
@@ -306,7 +619,7 @@ export default function Home() {
         const defaults = buildDefaults(schema.fields ?? []);
         const nextParams: Record<string, unknown> = {};
         const allowed = new Set(engineFields(schema.fields ?? []).map((field) => field.key));
-        const gapField = (schema.fields ?? []).find((field) => field.key === "chatterbox_gap_ms");
+        const gapField = (schema.fields ?? []).find((field) => field.key === "chunk_gap_ms");
         const gapDefault = typeof gapField?.default === "number" ? gapField.default : 0;
         setUiState((prev) => ({
           ...prev,
@@ -320,8 +633,9 @@ export default function Home() {
             }
             return {
               ...prev.engine,
+              language: prev.engine.language ?? "fr-FR",
               params: nextParams,
-              chatterbox_gap_ms: prev.engine.chatterbox_gap_ms ?? gapDefault,
+              chunk_gap_ms: prev.engine.chunk_gap_ms ?? gapDefault,
             };
           })(),
         }));
@@ -335,6 +649,20 @@ export default function Home() {
     return () => {
       active = false;
     };
+  }, [uiState.engine.engine_id, schemaRefreshNonce]);
+
+  function refreshEngineSchema() {
+    setSchemaRefreshNonce((value) => value + 1);
+  }
+
+  useEffect(() => {
+    setUiState((prev) => {
+      if (prev.engine.language && prev.engine.language !== "") return prev;
+      return {
+        ...prev,
+        engine: { ...prev.engine, language: "fr-FR" },
+      };
+    });
   }, [uiState.engine.engine_id]);
 
   useEffect(() => {
@@ -487,13 +815,14 @@ export default function Home() {
     setEditedPath(null);
     setEditedAssetId(null);
     setEditedAudioHref(null);
-    setEditedMeta(null);
+    setEditSummary(null);
 
     try {
       const textSnapshot = uiState.direction.snapshot_text.trim();
       const payload = {
         engine_id: uiState.engine.engine_id,
         voice_id: supportsRef ? uiState.engine.voice_id : null,
+        language: uiState.engine.language,
         text_source: textSnapshot ? "snapshot" : "interpreted",
         text_raw: uiState.preparation.text_raw,
         text_adjusted: uiState.preparation.text_adjusted,
@@ -502,7 +831,7 @@ export default function Home() {
         chunk_markers: uiState.direction.chunk_markers,
         engine_params: uiState.engine.params,
         post_params: {
-          chatterbox_gap_ms: uiState.engine.chatterbox_gap_ms,
+          chunk_gap_ms: uiState.engine.chunk_gap_ms,
         },
       };
       const job = await apiPost<JobCreateResponse>("/v1/tts/jobs", payload);
@@ -550,27 +879,102 @@ export default function Home() {
     }
   }
 
+  async function enhanceAsset(sourceAssetId: string): Promise<AudioEnhanceResponse> {
+    const resp = await fetch(assetUrl(sourceAssetId));
+    if (!resp.ok) {
+      throw new Error(`${resp.status} ${resp.statusText}`);
+    }
+    const blob = await resp.blob();
+    const file = new File([blob], `vocalie-${sourceAssetId}.wav`, {
+      type: blob.type || "audio/wav",
+    });
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("engine", "audiosr");
+    formData.append("ddim_steps", String(audiosrParams.ddim_steps));
+    formData.append("guidance_scale", String(audiosrParams.guidance_scale));
+    formData.append("seed", String(audiosrParams.seed));
+    formData.append("chunk_size", String(audiosrParams.chunk_size));
+    formData.append("overlap", String(audiosrParams.overlap));
+    formData.append("multiband_ensemble", audiosrParams.multiband_ensemble ? "1" : "0");
+    formData.append("input_cutoff", String(audiosrParams.input_cutoff));
+    return apiPostForm<AudioEnhanceResponse>("/v1/audio/enhance", formData);
+  }
+
+  async function fetchEditSummary(targetAssetId: string) {
+    try {
+      const meta = await apiGet<AssetMetaResponse>(`/v1/assets/${targetAssetId}/meta`);
+      setEditSummary({ sample_rate: meta.sample_rate ?? null, duration_s: meta.duration_s ?? null });
+      if (process.env.NODE_ENV === "development") {
+        setEditedPath(meta.file_name || null);
+      }
+    } catch {
+      setEditSummary(null);
+    }
+  }
+
   async function handleEdit() {
-    if (!assetId || !uiState.post.edit_enabled) return;
+    if (!assetId) return;
     setIsEditing(true);
+    setEditProgress(0);
     setEditedPath(null);
     setEditedAssetId(null);
     setEditedAudioHref(null);
-    setEditedMeta(null);
+    setEditSummary(null);
+    let currentAssetId = assetId;
+    let lastOutputFile: string | null = null;
+    const totalSteps =
+      (audiosrEnabled ? 1 : 0) + (uiState.post.trim_enabled ? 1 : 0) + (uiState.post.normalize_enabled ? 1 : 0);
+    let completedSteps = 0;
     try {
-      const result = await apiPost<AudioEditResponse>("/v1/audio/edit", {
-        asset_id: assetId,
-        trim_enabled: uiState.post.trim_enabled,
-        normalize_enabled: uiState.post.normalize_enabled,
-        target_dbfs: uiState.post.target_dbfs,
-      });
-      setEditedPath(result.edited_wav_path);
-      setEditedAssetId(result.asset_id ?? null);
-      setEditedAudioHref(result.asset_id ? assetUrl(result.asset_id) : null);
-      setEditedMeta(result.metrics);
+      if (audiosrEnabled) {
+        const enhanced = await enhanceAsset(currentAssetId);
+        if (enhanced.asset_id) {
+          currentAssetId = enhanced.asset_id;
+          lastOutputFile = enhanced.output_file;
+        }
+        completedSteps += 1;
+        if (totalSteps > 0) setEditProgress(completedSteps / totalSteps);
+      }
+
+      if (uiState.post.trim_enabled) {
+        const trimmed = await apiPost<AudioEditResponse>("/v1/audio/edit", {
+          asset_id: currentAssetId,
+          trim_enabled: true,
+          normalize_enabled: false,
+          target_dbfs: uiState.post.target_dbfs,
+        });
+        if (trimmed.asset_id) {
+          currentAssetId = trimmed.asset_id;
+          lastOutputFile = trimmed.edited_wav_path;
+        }
+        completedSteps += 1;
+        if (totalSteps > 0) setEditProgress(completedSteps / totalSteps);
+      }
+
+      if (uiState.post.normalize_enabled) {
+        const normalized = await apiPost<AudioEditResponse>("/v1/audio/edit", {
+          asset_id: currentAssetId,
+          trim_enabled: false,
+          normalize_enabled: true,
+          target_dbfs: uiState.post.target_dbfs,
+        });
+        if (normalized.asset_id) {
+          currentAssetId = normalized.asset_id;
+          lastOutputFile = normalized.edited_wav_path;
+        }
+        completedSteps += 1;
+        if (totalSteps > 0) setEditProgress(completedSteps / totalSteps);
+      }
+
+      setEditedAssetId(currentAssetId);
+      setEditedAudioHref(assetUrl(currentAssetId));
+      setEditedPath(lastOutputFile);
+      await fetchEditSummary(currentAssetId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Edition impossible.");
     } finally {
+      setEditProgress(1);
       setIsEditing(false);
     }
   }
@@ -797,7 +1201,13 @@ export default function Home() {
                   onValueChange={(value) =>
                     setUiState((prev) => ({
                       ...prev,
-                      engine: { ...prev.engine, engine_id: value, params: {}, voice_id: null },
+                      engine: {
+                        ...prev.engine,
+                        engine_id: value,
+                        params: {},
+                        voice_id: null,
+                        language: prev.engine.language ?? "fr-FR",
+                      },
                     }))
                   }
                 >
@@ -813,6 +1223,13 @@ export default function Home() {
                   </SelectContent>
                 </Select>
               </div>
+              {uiState.engine.engine_id === "qwen3_custom" && (
+                <div className="flex items-end gap-2">
+                  <Button variant="outline" type="button" onClick={refreshEngineSchema}>
+                    Mise a jour liste speakers
+                  </Button>
+                </div>
+              )}
               {supportsRef && (
                 <div className="grid gap-2">
                   <label className="text-sm font-medium">Reference vocale</label>
@@ -838,6 +1255,29 @@ export default function Home() {
                   </Select>
                 </div>
               )}
+              <div className="grid gap-2">
+                <label className="text-sm font-medium">Langue</label>
+                <Select
+                  value={uiState.engine.language ?? "fr-FR"}
+                  onValueChange={(value) =>
+                    setUiState((prev) => ({
+                      ...prev,
+                      engine: { ...prev.engine, language: value },
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choisir une langue" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LANGUAGE_OPTIONS.map((lang) => (
+                      <SelectItem key={lang.value} value={lang.value}>
+                        {lang.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             {engineFieldList.length > 0 && (
               <DynamicFields
@@ -845,35 +1285,222 @@ export default function Home() {
                 values={uiState.engine.params}
                 context={context}
                 onChange={(key, value, field) => {
-                  if (field.serialize_scope === "post" && key === "chatterbox_gap_ms") {
+                  if (field.serialize_scope === "post" && key === "chunk_gap_ms") {
                     setUiState((prev) => ({
                       ...prev,
-                      engine: { ...prev.engine, chatterbox_gap_ms: Number(value) },
+                      engine: { ...prev.engine, chunk_gap_ms: Number(value) },
                     }));
                     return;
                   }
-                  setUiState((prev) => ({
-                    ...prev,
-                    engine: {
-                      ...prev.engine,
-                      params: { ...prev.engine.params, [key]: value },
-                    },
-                  }));
+                  updateEngineParam(key, value);
                 }}
               />
+            )}
+            {isQwen3VoiceDesign && (
+              <div className="grid gap-3 rounded-md border border-zinc-200 px-3 py-3">
+                <div>
+                  <p className="text-sm font-medium text-zinc-900">Presets VoiceDesign</p>
+                  <p className="text-xs text-zinc-500">
+                    Charger/enregistrer une instruction + ses selections.
+                  </p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-[1fr_1fr]">
+                  <div className="grid gap-2">
+                    <label className="text-sm font-medium">Preset</label>
+                    <Select
+                      value={voiceDesignPresetId}
+                      onValueChange={(value) => {
+                        setVoiceDesignPresetId(value);
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choisir un preset" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Aucun preset</SelectItem>
+                        {voiceDesignPresets.map((preset) => (
+                          <SelectItem key={preset.id} value={preset.id}>
+                            {preset.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-2">
+                    <label className="text-sm font-medium">Nom du preset</label>
+                    <Input
+                      value={voiceDesignPresetName}
+                      onChange={(event) => setVoiceDesignPresetName(event.target.value)}
+                      placeholder="Nom du preset"
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => {
+                      if (voiceDesignPresetId === "none") return;
+                      const preset = voiceDesignPresets.find((item) => item.id === voiceDesignPresetId);
+                      if (!preset) return;
+                      if (!window.confirm(`Charger le preset "${preset.label}" ?`)) return;
+                      updateEngineParam("instruct", preset.instruct);
+                      Object.entries(preset.options || {}).forEach(([key, value]) => updateEngineParam(key, value));
+                    }}
+                    disabled={voiceDesignPresetId === "none"}
+                  >
+                    Charger
+                  </Button>
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => {
+                      const name = voiceDesignPresetName.trim();
+                      if (name.length < 2) {
+                        window.alert("Nom de preset trop court.");
+                        return;
+                      }
+                      const id = name.toLowerCase().replace(/\s+/g, "-");
+                      const existing = voiceDesignPresets.find((item) => item.id === id);
+                      if (existing && !window.confirm(`Remplacer le preset "${existing.label}" ?`)) {
+                        return;
+                      }
+                      const options: Record<string, unknown> = {};
+                      [
+                        "design_gender",
+                        "design_age",
+                        "design_pitch",
+                        "design_speed",
+                        "design_volume",
+                        "design_accent",
+                        "design_emotion",
+                        "design_texture",
+                        "design_style",
+                      ].forEach((key) => {
+                        if (uiState.engine.params?.[key] !== undefined) {
+                          options[key] = uiState.engine.params[key];
+                        }
+                      });
+                      const instruct = String(uiState.engine.params?.instruct || "");
+                      const updated = [
+                        ...voiceDesignPresets.filter((item) => item.id !== id),
+                        { id, label: name, instruct, options },
+                      ].sort((a, b) => a.label.localeCompare(b.label));
+                      setVoiceDesignPresets(updated);
+                      setVoiceDesignPresetId(id);
+                    }}
+                  >
+                    Enregistrer
+                  </Button>
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => {
+                      if (voiceDesignPresetId === "none") return;
+                      const preset = voiceDesignPresets.find((item) => item.id === voiceDesignPresetId);
+                      if (!preset) return;
+                      if (!window.confirm(`Supprimer le preset "${preset.label}" ?`)) return;
+                      setVoiceDesignPresets((prev) => prev.filter((item) => item.id !== voiceDesignPresetId));
+                      setVoiceDesignPresetId("none");
+                    }}
+                    disabled={voiceDesignPresetId === "none"}
+                  >
+                    Supprimer
+                  </Button>
+                </div>
+
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium">Instruction</label>
+                  <Input
+                    value={String(uiState.engine.params?.instruct ?? "")}
+                    onChange={(event) => updateEngineParam("instruct", event.target.value)}
+                    placeholder="Style/intonation (optionnel)."
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-zinc-900">Guidage VoiceDesign</p>
+                    <p className="text-xs text-zinc-500">Selectionne des attributs simples pour generer l instruction.</p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => {
+                      const built = buildVoiceDesignInstruction(uiState.engine.params, uiState.engine.language);
+                      if (built) {
+                        updateEngineParam("instruct", built);
+                      }
+                    }}
+                  >
+                    Generer instruction
+                  </Button>
+                </div>
+
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium">Preset rapide</label>
+                  <div className="flex flex-wrap gap-2">
+                    {VOICE_DESIGN_PRESETS.map((preset) => (
+                      <Button
+                        key={preset.id}
+                        variant="outline"
+                        type="button"
+                        onClick={() => updateEngineParam("instruct", preset.instruct)}
+                      >
+                        {preset.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-[1fr_1fr]">
+                  {(
+                    [
+                      ["design_gender", "Genre", VOICE_DESIGN_OPTIONS.gender],
+                      ["design_age", "Age", VOICE_DESIGN_OPTIONS.age],
+                      ["design_pitch", "Pitch", VOICE_DESIGN_OPTIONS.pitch],
+                      ["design_speed", "Vitesse", VOICE_DESIGN_OPTIONS.speed],
+                      ["design_volume", "Volume", VOICE_DESIGN_OPTIONS.volume],
+                      ["design_accent", "Accent", VOICE_DESIGN_OPTIONS.accent],
+                      ["design_emotion", "Emotion", VOICE_DESIGN_OPTIONS.emotion],
+                      ["design_texture", "Texture", VOICE_DESIGN_OPTIONS.texture],
+                      ["design_style", "Style", VOICE_DESIGN_OPTIONS.style],
+                    ] as Array<[string, string, Array<{ value: string; label: string }>]>
+                  ).map(([key, label, choices]) => (
+                    <div key={key} className="grid gap-2">
+                      <label className="text-sm font-medium">{label}</label>
+                      <Select
+                        value={String(uiState.engine.params?.[key] ?? "")}
+                        onValueChange={(value) => updateEngineParam(key, value)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Choisir" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {choices.map((choice) => (
+                            <SelectItem key={choice.value} value={choice.value}>
+                              {choice.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
             {postFieldList.length > 0 && (
               <div className="grid gap-3">
                 <p className="text-xs font-semibold uppercase text-zinc-500">Post parametres</p>
                 <DynamicFields
                   fields={postFieldList}
-                  values={{ chatterbox_gap_ms: uiState.engine.chatterbox_gap_ms }}
+                  values={{ chunk_gap_ms: uiState.engine.chunk_gap_ms }}
                   context={context}
                   onChange={(key, value) => {
-                    if (key === "chatterbox_gap_ms") {
+                    if (key === "chunk_gap_ms") {
                       setUiState((prev) => ({
                         ...prev,
-                        engine: { ...prev.engine, chatterbox_gap_ms: Number(value) },
+                        engine: { ...prev.engine, chunk_gap_ms: Number(value) },
                       }));
                     }
                   }}
@@ -933,45 +1560,158 @@ export default function Home() {
           </CardHeader>
           <CardContent className="grid gap-4">
             <label className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2">
-              <span className="text-sm">Activer edition</span>
+              <div className="flex flex-col">
+                <span className="text-sm">Amelioration audio (AudioSR)</span>
+                {!audiosrAvailable && (
+                  <span className="text-xs text-zinc-500">Module non installe/ desactive sur cette machine</span>
+                )}
+                {process.env.NODE_ENV === "development" && (
+                  <span className="text-xs text-zinc-400">
+                    AudioSR available: {String(audiosrStatus?.available)} · enabled: {String(audiosrStatus?.enabled)}
+                  </span>
+                )}
+              </div>
               <Switch
-                checked={uiState.post.edit_enabled}
+                checked={audiosrEnabled}
+                disabled={!audiosrAvailable}
+                onCheckedChange={(checked) => setAudiosrEnabled(checked)}
+              />
+            </label>
+            <div className={`grid gap-3 rounded-md border border-zinc-200 px-3 py-2 ${audiosrEnabled ? "" : "opacity-60"}`}>
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium">Steps</span>
+                <span className="font-mono text-xs text-zinc-500">{audiosrParams.ddim_steps}</span>
+              </div>
+              <Slider
+                value={[audiosrParams.ddim_steps]}
+                min={20}
+                max={250}
+                step={1}
+                disabled={!audiosrEnabled || !audiosrAvailable}
+                onValueChange={(vals) =>
+                  setAudiosrParams((prev) => ({
+                    ...prev,
+                    ddim_steps: vals[0],
+                  }))
+                }
+              />
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium">Guidance</span>
+                <span className="font-mono text-xs text-zinc-500">{audiosrParams.guidance_scale.toFixed(1)}</span>
+              </div>
+              <Slider
+                value={[audiosrParams.guidance_scale]}
+                min={1}
+                max={4}
+                step={0.1}
+                disabled={!audiosrEnabled || !audiosrAvailable}
+                onValueChange={(vals) =>
+                  setAudiosrParams((prev) => ({
+                    ...prev,
+                    guidance_scale: vals[0],
+                  }))
+                }
+              />
+              <div className="grid gap-2">
+                <label className="text-xs text-zinc-500">Seed</label>
+                <Input
+                  type="number"
+                  value={audiosrParams.seed}
+                  disabled={!audiosrEnabled || !audiosrAvailable}
+                  onChange={(event) =>
+                    setAudiosrParams((prev) => ({
+                      ...prev,
+                      seed: Number(event.target.value),
+                    }))
+                  }
+                />
+              </div>
+              <label className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2">
+                <span className="text-sm">Multiband ensemble</span>
+                <Switch
+                  checked={audiosrParams.multiband_ensemble}
+                  disabled={!audiosrEnabled || !audiosrAvailable}
+                  onCheckedChange={(checked) =>
+                    setAudiosrParams((prev) => ({
+                      ...prev,
+                      multiband_ensemble: checked,
+                    }))
+                  }
+                />
+              </label>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setAudiosrAdvancedOpen((prev) => !prev)}
+                disabled={!audiosrEnabled || !audiosrAvailable}
+              >
+                {audiosrAdvancedOpen ? "Masquer les options avancees" : "Options avancees"}
+              </Button>
+              {audiosrAdvancedOpen && (
+                <div className="grid gap-2">
+                  <label className="text-xs text-zinc-500">Chunk size</label>
+                  <Input
+                    type="number"
+                    value={audiosrParams.chunk_size}
+                    disabled={!audiosrEnabled || !audiosrAvailable}
+                    onChange={(event) =>
+                      setAudiosrParams((prev) => ({
+                        ...prev,
+                        chunk_size: Number(event.target.value),
+                      }))
+                    }
+                  />
+                  <label className="text-xs text-zinc-500">Overlap</label>
+                  <Input
+                    type="number"
+                    value={audiosrParams.overlap}
+                    disabled={!audiosrEnabled || !audiosrAvailable}
+                    onChange={(event) =>
+                      setAudiosrParams((prev) => ({
+                        ...prev,
+                        overlap: Number(event.target.value),
+                      }))
+                    }
+                  />
+                  <label className="text-xs text-zinc-500">Input cutoff</label>
+                  <Input
+                    type="number"
+                    value={audiosrParams.input_cutoff}
+                    disabled={!audiosrEnabled || !audiosrAvailable}
+                    onChange={(event) =>
+                      setAudiosrParams((prev) => ({
+                        ...prev,
+                        input_cutoff: Number(event.target.value),
+                      }))
+                    }
+                  />
+                </div>
+              )}
+            </div>
+            <label className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2">
+              <span className="text-sm">Trim silence</span>
+              <Switch
+                checked={uiState.post.trim_enabled}
                 onCheckedChange={(checked) =>
                   setUiState((prev) => ({
                     ...prev,
-                    post: { ...prev.post, edit_enabled: checked },
+                    post: { ...prev.post, trim_enabled: checked },
                   }))
                 }
               />
             </label>
-            <div className="grid gap-3 md:grid-cols-[1fr_1fr]">
-              <label className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2">
-                <span className="text-sm">Trim silence</span>
-                <Switch
-                  checked={uiState.post.trim_enabled}
-                  disabled={!uiState.post.edit_enabled}
-                  onCheckedChange={(checked) =>
-                    setUiState((prev) => ({
-                      ...prev,
-                      post: { ...prev.post, trim_enabled: checked },
-                    }))
-                  }
-                />
-              </label>
-              <label className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2">
-                <span className="text-sm">Normalize</span>
-                <Switch
-                  checked={uiState.post.normalize_enabled}
-                  disabled={!uiState.post.edit_enabled}
-                  onCheckedChange={(checked) =>
-                    setUiState((prev) => ({
-                      ...prev,
-                      post: { ...prev.post, normalize_enabled: checked },
-                    }))
-                  }
-                />
-              </label>
-            </div>
+            <label className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2">
+              <span className="text-sm">Normalize</span>
+              <Switch
+                checked={uiState.post.normalize_enabled}
+                onCheckedChange={(checked) =>
+                  setUiState((prev) => ({
+                    ...prev,
+                    post: { ...prev.post, normalize_enabled: checked },
+                  }))
+                }
+              />
+            </label>
             <div className="grid gap-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="font-medium">Target dBFS</span>
@@ -982,7 +1722,7 @@ export default function Home() {
                 min={-12}
                 max={0}
                 step={0.5}
-                disabled={!uiState.post.edit_enabled}
+                disabled={!uiState.post.normalize_enabled}
                 onValueChange={(vals) =>
                   setUiState((prev) => ({
                     ...prev,
@@ -992,30 +1732,47 @@ export default function Home() {
               />
             </div>
             <div className="flex items-center gap-2">
-              <Button onClick={handleEdit} disabled={!assetId || isEditing || !uiState.post.edit_enabled}>
-                {isEditing ? "Edition..." : "Editer"}
+              <Button onClick={handleEdit} disabled={!canApplyEdit}>
+                {isEditing ? "Edition..." : "Appliquer l'edition"}
               </Button>
               <Button
                 variant="outline"
                 onClick={() =>
-                  handleExport(editedAssetId, `vocalie-edition-${editedAssetId ?? "audio"}.wav`, setIsExportingEdited)
+                  handleExport(
+                    exportTargetId,
+                    `vocalie-edition-${exportTargetId ?? "audio"}.wav`,
+                    setIsExportingEdited,
+                  )
                 }
-                disabled={!editedAssetId || isExportingEdited}
+                disabled={!exportTargetId || isExportingEdited}
               >
-                {isExportingEdited ? "Export..." : "Exporter"}
+                {isExportingEdited ? "Export..." : "Exporter le fichier"}
               </Button>
               {editedPath && <span className="text-xs text-zinc-500">{editedPath}</span>}
+              {isEditing && (
+                <div className="flex items-center gap-2 text-xs text-zinc-500">
+                  <span
+                    className="inline-flex h-3 w-3 animate-spin rounded-full border-2 border-zinc-400 border-t-transparent"
+                    aria-hidden="true"
+                  />
+                  <span>{Math.round(editProgress * 100)}%</span>
+                </div>
+              )}
             </div>
+            {editSummary && (
+              <div className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span>Sample rate: {editSummary.sample_rate ?? "--"} Hz</span>
+                  <span>Duree: {editSummary.duration_s ? `${editSummary.duration_s.toFixed(2)} s` : "--"}</span>
+                  {process.env.NODE_ENV === "development" && editedAssetId && <span>Asset: {editedAssetId}</span>}
+                </div>
+              </div>
+            )}
             {editedAudioHref && (
               <div className="rounded-md border border-zinc-200 bg-white p-3">
                 <Waveform src={editedAudioHref} />
                 <audio controls src={editedAudioHref} className="w-full" />
                 <p className="mt-2 text-xs text-zinc-500">Asset: {editedAssetId}</p>
-              </div>
-            )}
-            {editedMeta && (
-              <div className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600">
-                <pre className="whitespace-pre-wrap">{JSON.stringify(editedMeta, null, 2)}</pre>
               </div>
             )}
           </CardContent>

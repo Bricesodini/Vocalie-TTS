@@ -323,9 +323,9 @@ def run_tts_pipeline(request: dict, progress_cb=None) -> PipelineResult:
             progress_cb(idx / float(len(chunks)))
 
     inter_chunk_gap_ms = int(request.get("inter_chunk_gap_ms") or 0)
-    if backend_id != "chatterbox":
+    if backend_id not in {"chatterbox", "qwen3"}:
         inter_chunk_gap_ms = 0
-    gap_applied = bool(backend_id == "chatterbox" and len(audio_chunks) > 1 and inter_chunk_gap_ms > 0)
+    gap_applied = bool(backend_id in {"chatterbox", "qwen3"} and len(audio_chunks) > 1 and inter_chunk_gap_ms > 0)
     if gap_applied:
         final_audio = _apply_inter_chunk_gap(audio_chunks, sr=target_sr, gap_ms=inter_chunk_gap_ms)
     else:

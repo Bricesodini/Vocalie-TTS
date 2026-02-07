@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class HealthResponse(BaseModel):
@@ -24,9 +24,15 @@ class InfoResponse(BaseModel):
     presets_dir: str
 
 
+class AudioSRStatus(BaseModel):
+    enabled: bool
+    available: bool
+
+
 class CapabilitiesResponse(BaseModel):
     engines: List[str]
     features: Dict[str, Any]
+    audiosr: Optional[AudioSRStatus] = None
 
 
 class EngineInfo(BaseModel):
@@ -112,8 +118,13 @@ class UIStateDirection(BaseModel):
 class UIStateEngine(BaseModel):
     engine_id: str = ""
     voice_id: Optional[str] = None
+    language: Optional[str] = None
     params: Dict[str, Any] = Field(default_factory=dict)
-    chatterbox_gap_ms: int = 0
+    chunk_gap_ms: int = Field(
+        default=0,
+        validation_alias=AliasChoices("chunk_gap_ms", "chatterbox_gap_ms"),
+        serialization_alias="chunk_gap_ms",
+    )
 
     model_config = ConfigDict(extra="allow")
 
@@ -276,6 +287,14 @@ class AudioEditResponse(BaseModel):
     edited_wav_path: str
     asset_id: Optional[str] = None
     metrics: Dict[str, Any]
+
+
+class AudioEnhanceResponse(BaseModel):
+    output_file: str
+    sample_rate: int
+    duration_s: float
+    asset_id: Optional[str] = None
+    engine: str
 
 
 class TTSJobRequest(BaseModel):

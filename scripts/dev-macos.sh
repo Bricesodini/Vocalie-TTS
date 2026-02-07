@@ -36,7 +36,7 @@ start_process() {
 install_frontend_deps
 
 start_process "backend" "$ROOT_DIR/scripts/dev-backend.sh"
-start_process "frontend" "cd $FRONTEND_DIR && npm run dev"
+start_process "frontend" "cd $FRONTEND_DIR && NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE:-http://127.0.0.1:8000} npm run dev"
 
 echo "Backend: http://127.0.0.1:8000"
 echo "Frontend: http://localhost:3000"

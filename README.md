@@ -22,6 +22,9 @@ Vocalie-TTS s'adresse aux createurs audio/video qui recherchent :
 - Post-traitement audio optionnel :
   - nettoyage des silences en debut et fin
   - normalisation du niveau sonore (dBFS)
+- Amelioration audio (AudioSR) :
+  - mode studio (plus lent)
+  - parametres reglables (steps, guidance, seed, chunking)
 
 ---
 
@@ -57,6 +60,7 @@ Le frontend (Next.js) et Gradio sont deux clients distincts de cette API.
 - [Presentation](#presentation)
 - [Architecture](#architecture)
 - [Objectifs](#objectifs)
+- [Migration AudioSR](#migration-audiosr)
 - [Quickstart](#quickstart)
 - [Installation par plateforme](#installation-par-plateforme)
 - [Voix et references](#voix-et-references)
@@ -65,6 +69,12 @@ Le frontend (Next.js) et Gradio sont deux clients distincts de cette API.
 - [Troubleshooting](#troubleshooting)
 - [Scripts](#scripts-optionnel)
 - [Licence](#licence)
+
+---
+
+## Migration AudioSR
+
+La migration AudioSR est developpee sur la branche `feature/audiosr-migration` afin de garder `main` stable.
 
 ---
 
@@ -103,6 +113,11 @@ Ouvrir ensuite :
 - Frontend : http://localhost:3000
 - API : http://127.0.0.1:8000
 
+AudioSR (amelioration audio) est installe par defaut via bootstrap.
+```bash
+./scripts/install-audiosr-venv.sh
+```
+
 ---
 
 ## Installation par plateforme
@@ -123,6 +138,11 @@ Le frontend utilise `npm ci` avec un lockfile Linux-only (CI stricte).
 1. Bootstrap backend + moteurs :
 ```bash
 ./scripts/bootstrap.sh min
+```
+
+AudioSR (installe par defaut) :
+```bash
+./scripts/install-audiosr-venv.sh
 ```
 
 2. Precharger les poids Chatterbox (cache HF) :
@@ -160,6 +180,8 @@ Option GPU Nvidia :
 ```powershell
 setx VOCALIE_ENABLE_CUDA 1
 ```
+
+AudioSR est installe par defaut via bootstrap.
 
 ---
 
@@ -209,8 +231,9 @@ Automatiser ce qui est repetitif, garder explicite ce qui influence le son.
 ## Reproductibilite (lockfiles)
 
 - Python :
-  - `requirements.lock.txt`
-  - `requirements-chatterbox.lock.txt`
+- `requirements.lock.txt`
+- `requirements-chatterbox.lock.txt`
+- `requirements-audiosr.lock.txt`
 - Generation :
 ```bash
 ./scripts/lock-requirements.sh
@@ -239,6 +262,20 @@ curl http://127.0.0.1:8000/v1/tts/engines
 curl "http://127.0.0.1:8000/v1/tts/voices?engine=chatterbox_native"
 ```
 
+### Capabilities (AudioSR)
+
+```bash
+curl http://127.0.0.1:8000/v1/capabilities
+```
+
+### Amelioration audio (AudioSR)
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/audio/enhance \
+  -F "file=@tests/assets/audiosr_sample.wav" \
+  -F "engine=audiosr"
+```
+
 ### Generation (extrait)
 
 ```bash
@@ -255,6 +292,8 @@ curl -X POST http://127.0.0.1:8000/v1/tts/jobs \
 - XTTS sur macOS -> CPU only (comportement attendu)
 - Probleme Hugging Face gated model -> verifier `HUGGINGFACE_TOKEN`
 - `Module not found` frontend -> `rm -rf node_modules && npm install`
+- AudioSR n'apparait pas dans le frontend -> verifier `GET /v1/capabilities` et que la venv AudioSR est installee
+- Premier run AudioSR lent -> telechargement des poids (cache Hugging Face), comportement attendu
 
 ---
 

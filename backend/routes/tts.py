@@ -59,6 +59,18 @@ ENGINE_CATALOG = [
         "backend_id": "bark",
         "supports_ref": False,
     },
+    {
+        "id": "qwen3_custom",
+        "label": "Qwen3 (CustomVoice/Design)",
+        "backend_id": "qwen3",
+        "supports_ref": False,
+    },
+    {
+        "id": "qwen3_clone",
+        "label": "Qwen3 (Voice clone)",
+        "backend_id": "qwen3",
+        "supports_ref": True,
+    },
 ]
 
 
@@ -137,17 +149,17 @@ def get_engine_schema(engine: str = Query(...)) -> EngineSchemaResponse:
                 serialize_scope=spec.serialize_scope,
             )
         )
-    if engine.startswith("chatterbox_"):
+    if engine.startswith("chatterbox_") or engine.startswith("qwen3_"):
         fields.append(
             EngineSchemaField(
-                key="chatterbox_gap_ms",
+                key="chunk_gap_ms",
                 type="slider",
                 min=0,
                 max=2000,
                 step=10,
                 default=0,
                 label="Blanc entre chunks (ms)",
-                help="Ajoute un silence entre les chunks.",
+                help="Ajoute un silence entre les chunks (Chatterbox/Qwen3).",
                 serialize_scope="post",
             )
         )
@@ -211,13 +223,23 @@ def create_job(http_request: Request, request: TTSJobRequest) -> JobCreateRespon
     if request.engine_params:
         options.update(request.engine_params)
     post_params = dict(request.post_params or {})
-    gap_ms = post_params.get("chatterbox_gap_ms")
-    if gap_ms is not None:
+    gap_ms = post_params.get("chunk_gap_ms")
+    if gap_ms is None:
+        gap_ms = post_params.get("chatterbox_gap_ms")
+    if gap_ms is not None and (engine_id.startswith("chatterbox_") or engine_id.startswith("qwen3_")):
         options["inter_chunk_gap_ms"] = int(gap_ms)
     if request.engine == "chatterbox_native" or engine_id == "chatterbox_native":
         options.setdefault("chatterbox_mode", "multilang")
     elif request.engine == "chatterbox_finetune_fr" or engine_id == "chatterbox_finetune_fr":
         options.setdefault("chatterbox_mode", "fr_finetune")
+    elif request.engine == "qwen3_custom" or engine_id == "qwen3_custom":
+        requested_mode = options.get("qwen3_mode")
+        if requested_mode in {"custom_voice", "voice_design"}:
+            options["qwen3_mode"] = requested_mode
+        else:
+            options["qwen3_mode"] = "custom_voice"
+    elif request.engine == "qwen3_clone" or engine_id == "qwen3_clone":
+        options["qwen3_mode"] = "voice_clone"
     if request.voice_id and not meta["supports_ref"]:
         options.setdefault("voice_id", request.voice_id)
 

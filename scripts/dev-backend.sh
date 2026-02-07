@@ -30,7 +30,59 @@ if [[ "${WITH_CHATTERBOX:-0}" == "1" ]]; then
   "$ROOT_DIR/scripts/install-chatterbox-venv.sh"
 fi
 
+echo "Installing AudioSR isolated venv"
+"$ROOT_DIR/scripts/install-audiosr-venv.sh"
+AUDIOSR_PY="$ROOT_DIR/.venvs/audiosr/bin/python"
+if [[ -x "$AUDIOSR_PY" ]]; then
+  if ! "$AUDIOSR_PY" -c "import cog, pyloudnorm; print('ok')"; then
+    echo "AudioSR import failed in isolated venv ($AUDIOSR_PY)" >&2
+    exit 1
+  fi
+else
+  echo "AudioSR python missing at $AUDIOSR_PY" >&2
+  exit 1
+fi
+
 API_PORT="${API_PORT:-8000}"
 API_HOST="${API_HOST:-127.0.0.1}"
 
-uvicorn backend.app:app --reload --host "$API_HOST" --port "$API_PORT"
+# Local development default: keep API key checks strict in prod, but allow
+# localhost calls when running the dev backend unless explicitly overridden.
+if [[ -z "${VOCALIE_TRUST_LOCALHOST:-}" ]]; then
+  export VOCALIE_TRUST_LOCALHOST=1
+fi
+
+if [[ -z "${VOCALIE_CORS_ORIGINS:-}" ]]; then
+  cors_origins="http://localhost:3000,http://127.0.0.1:3000"
+  lan_ip=""
+  if command -v ipconfig >/dev/null 2>&1; then
+    iface=""
+    if command -v route >/dev/null 2>&1; then
+      iface="$(route -n get default 2>/dev/null | awk '/interface:/{print $2}' | head -n1)"
+    fi
+    if [[ -n "$iface" ]]; then
+      lan_ip="$(ipconfig getifaddr "$iface" 2>/dev/null || true)"
+    fi
+    if [[ -z "$lan_ip" ]]; then
+      lan_ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
+    fi
+    if [[ -z "$lan_ip" ]]; then
+      lan_ip="$(ipconfig getifaddr en1 2>/dev/null || true)"
+    fi
+    if [[ -z "$lan_ip" ]]; then
+      lan_ip="$(ipconfig getifaddr en2 2>/dev/null || true)"
+    fi
+    if [[ -z "$lan_ip" ]] && command -v ifconfig >/dev/null 2>&1; then
+      lan_ip="$(ifconfig 2>/dev/null | awk '/inet /{print $2}' | grep -v '^127\.' | head -n1)"
+    fi
+  elif command -v hostname >/dev/null 2>&1; then
+    lan_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  if [[ -n "$lan_ip" ]]; then
+    cors_origins="${cors_origins},http://${lan_ip}:3000"
+  fi
+  export VOCALIE_CORS_ORIGINS="$cors_origins"
+fi
+
+ASSETS_DIR="$ROOT_DIR/.assets"
+uvicorn backend.app:app --reload --reload-exclude "$ASSETS_DIR" --reload-exclude "**/.assets/**" --host "$API_HOST" --port "$API_PORT"
