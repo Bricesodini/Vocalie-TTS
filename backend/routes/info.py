@@ -21,15 +21,16 @@ def _utc_now() -> datetime:
 
 @router.get("/info", response_model=InfoResponse)
 def info() -> InfoResponse:
+    expose = bool(backend_config.VOCALIE_EXPOSE_SYSTEM_INFO)
     return InfoResponse(
         name="chatterbox-tts-fr",
         version="0.1.0",
         commit=None,
-        python=platform.python_version(),
-        os=platform.platform(),
-        work_dir=str(WORK_DIR),
-        output_dir=str(OUTPUT_DIR),
-        presets_dir=str(PRESETS_DIR),
+        python=platform.python_version() if expose else "hidden",
+        os=platform.platform() if expose else "hidden",
+        work_dir=str(WORK_DIR) if expose else "hidden",
+        output_dir=str(OUTPUT_DIR) if expose else "hidden",
+        presets_dir=str(PRESETS_DIR) if expose else "hidden",
     )
 
 

@@ -57,6 +57,100 @@ const LANGUAGE_OPTIONS = [
   { value: "zh-TW", label: "Chinese (zh-TW)" },
   { value: "ru-RU", label: "Russian (ru-RU)" },
 ];
+const VOICE_DESIGN_PRESETS = [
+  {
+    id: "fr_news_m",
+    label: "Journal TV FR (masculin)",
+    instruct:
+      "Voix masculine adulte, timbre clair, pitch moyen-bas, debit soutenu, volume fort, accent francais neutre. Ton autoritaire, confiant et informatif.",
+  },
+  {
+    id: "fr_story_f",
+    label: "Narration douce FR (feminin)",
+    instruct:
+      "Voix feminine adulte, timbre doux, pitch moyen, debit moyen, volume modere, accent francais neutre. Ton chaleureux et rassurant.",
+  },
+  {
+    id: "fr_angry_m",
+    label: "Colere FR (masculin)",
+    instruct:
+      "Voix masculine adulte, timbre rauque, pitch moyen-bas, debit rapide, volume fort. Emotion colerique, ton tranchant et percutant.",
+  },
+  {
+    id: "fr_young_f",
+    label: "Jeune adulte FR (feminin)",
+    instruct:
+      "Voix feminine jeune adulte, pitch moyen-haut, debit rapide, volume normal, accent francais neutre. Ton enjoue et expressif.",
+  },
+  {
+    id: "fr_senior_m",
+    label: "Senior FR (masculin)",
+    instruct:
+      "Voix masculine senior, pitch bas, debit lent, volume modere, accent francais neutre. Ton grave et pose.",
+  },
+];
+const VOICE_DESIGN_OPTIONS = {
+  gender: [
+    { value: "none", label: "Neutre" },
+    { value: "masculine", label: "Masculin" },
+    { value: "feminine", label: "Feminin" },
+  ],
+  age: [
+    { value: "none", label: "Neutre" },
+    { value: "teen", label: "Ado" },
+    { value: "young_adult", label: "Jeune adulte" },
+    { value: "adult", label: "Adulte" },
+    { value: "senior", label: "Senior" },
+  ],
+  pitch: [
+    { value: "none", label: "Neutre" },
+    { value: "low", label: "Bas" },
+    { value: "mid", label: "Moyen" },
+    { value: "high", label: "Haut" },
+  ],
+  speed: [
+    { value: "none", label: "Neutre" },
+    { value: "slow", label: "Lent" },
+    { value: "medium", label: "Normal" },
+    { value: "fast", label: "Rapide" },
+  ],
+  volume: [
+    { value: "none", label: "Neutre" },
+    { value: "soft", label: "Faible" },
+    { value: "normal", label: "Normal" },
+    { value: "loud", label: "Fort" },
+  ],
+  accent: [
+    { value: "none", label: "Neutre" },
+    { value: "fr_neutral", label: "Francais neutre" },
+    { value: "fr_paris", label: "Francais parisien" },
+    { value: "fr_quebec", label: "Francais quebecois" },
+    { value: "fr_belgium", label: "Francais belge" },
+    { value: "fr_swiss", label: "Francais suisse" },
+  ],
+  emotion: [
+    { value: "none", label: "Neutre" },
+    { value: "happy", label: "Joyeux" },
+    { value: "sad", label: "Triste" },
+    { value: "angry", label: "Colere" },
+    { value: "excited", label: "Excite" },
+    { value: "calm", label: "Calme" },
+  ],
+  texture: [
+    { value: "none", label: "Neutre" },
+    { value: "clear", label: "Claire" },
+    { value: "warm", label: "Chaleureuse" },
+    { value: "raspy", label: "Rauque" },
+    { value: "nasal", label: "Nasale" },
+  ],
+  style: [
+    { value: "none", label: "Neutre" },
+    { value: "conversational", label: "Conversationnel" },
+    { value: "narrative", label: "Narratif" },
+    { value: "authoritative", label: "Autoritaire" },
+    { value: "dramatic", label: "Dramatique" },
+  ],
+};
 
 const EMPTY_STATE: UIState = {
   preparation: {
@@ -78,7 +172,7 @@ const EMPTY_STATE: UIState = {
     voice_id: null,
     language: "fr-FR",
     params: {},
-    chatterbox_gap_ms: 0,
+    chunk_gap_ms: 0,
   },
   post: {
     edit_enabled: false,
@@ -220,6 +314,7 @@ export default function Home() {
   const [engines, setEngines] = useState<EngineInfo[]>([]);
   const [voices, setVoices] = useState<VoiceInfo[]>([]);
   const [engineSchema, setEngineSchema] = useState<EngineSchemaResponse | null>(null);
+  const [schemaRefreshNonce, setSchemaRefreshNonce] = useState(0);
   const [presets, setPresets] = useState<PresetListItem[]>([]);
   const [selectedPreset, setSelectedPreset] = useState<string>("");
   const [presetId, setPresetId] = useState<string>("");
@@ -278,15 +373,164 @@ export default function Home() {
   const canApplyEdit = Boolean(assetId && !isEditing);
   const exportTargetId = editedAssetId ?? assetId;
 
+  const isQwen3Custom = uiState.engine.engine_id === "qwen3_custom";
+  const isQwen3VoiceDesign = isQwen3Custom && uiState.engine.params?.qwen3_mode === "voice_design";
+
   const engineFieldList = useMemo(() => {
     const baseFields = engineFields(engineSchema?.fields ?? []);
     if (!uiState.engine.engine_id) {
       return baseFields;
     }
     const special = ["chatterbox_native", "chatterbox_finetune_fr"];
-    return baseFields.filter((field) => !(field.key === "chatterbox_mode" && special.includes(uiState.engine.engine_id)));
-  }, [engineSchema, uiState.engine.engine_id]);
+    return baseFields.filter((field) => {
+      if (field.key === "chatterbox_mode" && special.includes(uiState.engine.engine_id)) {
+        return false;
+      }
+      if (isQwen3VoiceDesign && field.key === "instruct") {
+        return false;
+      }
+      return true;
+    });
+  }, [engineSchema, uiState.engine.engine_id, isQwen3VoiceDesign]);
   const postFieldList = postFields(engineSchema?.fields ?? []);
+
+  function updateEngineParam(key: string, value: unknown) {
+    setUiState((prev) => ({
+      ...prev,
+      engine: {
+        ...prev.engine,
+        params: { ...prev.engine.params, [key]: value },
+      },
+    }));
+  }
+
+  function buildVoiceDesignInstruction(params: Record<string, unknown>, language?: string | null) {
+    const genderMap: Record<string, string> = {
+      masculine: "Voix masculine",
+      feminine: "Voix feminine",
+    };
+    const ageMap: Record<string, string> = {
+      teen: "ado",
+      young_adult: "jeune adulte",
+      adult: "adulte",
+      senior: "senior",
+    };
+    const pitchMap: Record<string, string> = {
+      low: "pitch bas",
+      mid: "pitch moyen",
+      high: "pitch haut",
+    };
+    const speedMap: Record<string, string> = {
+      slow: "debit lent",
+      medium: "debit normal",
+      fast: "debit rapide",
+    };
+    const volumeMap: Record<string, string> = {
+      soft: "volume faible",
+      normal: "volume normal",
+      loud: "volume fort",
+    };
+    const accentMap: Record<string, string> = {
+      fr_neutral: "accent francais neutre",
+      fr_paris: "accent francais parisien",
+      fr_quebec: "accent francais quebecois",
+      fr_belgium: "accent francais belge",
+      fr_swiss: "accent francais suisse",
+    };
+    const emotionMap: Record<string, string> = {
+      happy: "emotion joyeuse",
+      sad: "emotion triste",
+      angry: "emotion colerique",
+      excited: "emotion enthousiaste",
+      calm: "emotion calme",
+    };
+    const textureMap: Record<string, string> = {
+      clear: "timbre clair",
+      warm: "timbre chaleureux",
+      raspy: "timbre rauque",
+      nasal: "timbre nasal",
+    };
+    const styleMap: Record<string, string> = {
+      conversational: "ton conversationnel",
+      narrative: "ton narratif",
+      authoritative: "ton autoritaire",
+      dramatic: "ton dramatique",
+    };
+
+    const parts: string[] = [];
+    if (language && language.startsWith("fr")) {
+      parts.push("Parle en francais");
+    }
+    const genderKey = String(params.design_gender || "");
+    const gender = genderMap[genderKey === "none" ? "" : genderKey];
+    if (gender) parts.push(gender);
+    const ageKey = String(params.design_age || "");
+    const age = ageMap[ageKey === "none" ? "" : ageKey];
+    if (age) parts.push(age);
+    const textureKey = String(params.design_texture || "");
+    const texture = textureMap[textureKey === "none" ? "" : textureKey];
+    if (texture) parts.push(texture);
+    const pitchKey = String(params.design_pitch || "");
+    const pitch = pitchMap[pitchKey === "none" ? "" : pitchKey];
+    if (pitch) parts.push(pitch);
+    const speedKey = String(params.design_speed || "");
+    const speed = speedMap[speedKey === "none" ? "" : speedKey];
+    if (speed) parts.push(speed);
+    const volumeKey = String(params.design_volume || "");
+    const volume = volumeMap[volumeKey === "none" ? "" : volumeKey];
+    if (volume) parts.push(volume);
+    const accentKey = String(params.design_accent || "");
+    const accent = accentMap[accentKey === "none" ? "" : accentKey];
+    if (accent) {
+      parts.push(accent);
+    } else if (language && language.startsWith("fr")) {
+      parts.push("accent francais neutre");
+    }
+    const emotionKey = String(params.design_emotion || "");
+    const emotion = emotionMap[emotionKey === "none" ? "" : emotionKey];
+    if (emotion) parts.push(emotion);
+    const styleKey = String(params.design_style || "");
+    const style = styleMap[styleKey === "none" ? "" : styleKey];
+    if (style) parts.push(style);
+    if (parts.length === 0) return "";
+    return parts.join(", ") + ".";
+  }
+
+  const [voiceDesignPresets, setVoiceDesignPresets] = useState<
+    Array<{ id: string; label: string; instruct: string; options: Record<string, unknown> }>
+  >([]);
+  const [voiceDesignPresetId, setVoiceDesignPresetId] = useState("none");
+  const [voiceDesignPresetName, setVoiceDesignPresetName] = useState("");
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("voiceDesignPresets");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setVoiceDesignPresets(parsed);
+      }
+    } catch {
+      // ignore corrupt localStorage
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("voiceDesignPresets", JSON.stringify(voiceDesignPresets));
+    } catch {
+      // ignore write errors
+    }
+  }, [voiceDesignPresets]);
+
+  useEffect(() => {
+    if (!isQwen3VoiceDesign) return;
+    const lang = uiState.engine.language || "";
+    const accent = String(uiState.engine.params?.design_accent ?? "");
+    if (lang.startsWith("fr") && (!accent || accent === "none")) {
+      updateEngineParam("design_accent", "fr_neutral");
+    }
+  }, [isQwen3VoiceDesign, uiState.engine.language]);
 
   useEffect(() => {
     let active = true;
@@ -375,7 +619,7 @@ export default function Home() {
         const defaults = buildDefaults(schema.fields ?? []);
         const nextParams: Record<string, unknown> = {};
         const allowed = new Set(engineFields(schema.fields ?? []).map((field) => field.key));
-        const gapField = (schema.fields ?? []).find((field) => field.key === "chatterbox_gap_ms");
+        const gapField = (schema.fields ?? []).find((field) => field.key === "chunk_gap_ms");
         const gapDefault = typeof gapField?.default === "number" ? gapField.default : 0;
         setUiState((prev) => ({
           ...prev,
@@ -391,7 +635,7 @@ export default function Home() {
               ...prev.engine,
               language: prev.engine.language ?? "fr-FR",
               params: nextParams,
-              chatterbox_gap_ms: prev.engine.chatterbox_gap_ms ?? gapDefault,
+              chunk_gap_ms: prev.engine.chunk_gap_ms ?? gapDefault,
             };
           })(),
         }));
@@ -405,7 +649,11 @@ export default function Home() {
     return () => {
       active = false;
     };
-  }, [uiState.engine.engine_id]);
+  }, [uiState.engine.engine_id, schemaRefreshNonce]);
+
+  function refreshEngineSchema() {
+    setSchemaRefreshNonce((value) => value + 1);
+  }
 
   useEffect(() => {
     setUiState((prev) => {
@@ -583,7 +831,7 @@ export default function Home() {
         chunk_markers: uiState.direction.chunk_markers,
         engine_params: uiState.engine.params,
         post_params: {
-          chatterbox_gap_ms: uiState.engine.chatterbox_gap_ms,
+          chunk_gap_ms: uiState.engine.chunk_gap_ms,
         },
       };
       const job = await apiPost<JobCreateResponse>("/v1/tts/jobs", payload);
@@ -975,6 +1223,13 @@ export default function Home() {
                   </SelectContent>
                 </Select>
               </div>
+              {uiState.engine.engine_id === "qwen3_custom" && (
+                <div className="flex items-end gap-2">
+                  <Button variant="outline" type="button" onClick={refreshEngineSchema}>
+                    Mise a jour liste speakers
+                  </Button>
+                </div>
+              )}
               {supportsRef && (
                 <div className="grid gap-2">
                   <label className="text-sm font-medium">Reference vocale</label>
@@ -1030,35 +1285,222 @@ export default function Home() {
                 values={uiState.engine.params}
                 context={context}
                 onChange={(key, value, field) => {
-                  if (field.serialize_scope === "post" && key === "chatterbox_gap_ms") {
+                  if (field.serialize_scope === "post" && key === "chunk_gap_ms") {
                     setUiState((prev) => ({
                       ...prev,
-                      engine: { ...prev.engine, chatterbox_gap_ms: Number(value) },
+                      engine: { ...prev.engine, chunk_gap_ms: Number(value) },
                     }));
                     return;
                   }
-                  setUiState((prev) => ({
-                    ...prev,
-                    engine: {
-                      ...prev.engine,
-                      params: { ...prev.engine.params, [key]: value },
-                    },
-                  }));
+                  updateEngineParam(key, value);
                 }}
               />
+            )}
+            {isQwen3VoiceDesign && (
+              <div className="grid gap-3 rounded-md border border-zinc-200 px-3 py-3">
+                <div>
+                  <p className="text-sm font-medium text-zinc-900">Presets VoiceDesign</p>
+                  <p className="text-xs text-zinc-500">
+                    Charger/enregistrer une instruction + ses selections.
+                  </p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-[1fr_1fr]">
+                  <div className="grid gap-2">
+                    <label className="text-sm font-medium">Preset</label>
+                    <Select
+                      value={voiceDesignPresetId}
+                      onValueChange={(value) => {
+                        setVoiceDesignPresetId(value);
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choisir un preset" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Aucun preset</SelectItem>
+                        {voiceDesignPresets.map((preset) => (
+                          <SelectItem key={preset.id} value={preset.id}>
+                            {preset.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-2">
+                    <label className="text-sm font-medium">Nom du preset</label>
+                    <Input
+                      value={voiceDesignPresetName}
+                      onChange={(event) => setVoiceDesignPresetName(event.target.value)}
+                      placeholder="Nom du preset"
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => {
+                      if (voiceDesignPresetId === "none") return;
+                      const preset = voiceDesignPresets.find((item) => item.id === voiceDesignPresetId);
+                      if (!preset) return;
+                      if (!window.confirm(`Charger le preset "${preset.label}" ?`)) return;
+                      updateEngineParam("instruct", preset.instruct);
+                      Object.entries(preset.options || {}).forEach(([key, value]) => updateEngineParam(key, value));
+                    }}
+                    disabled={voiceDesignPresetId === "none"}
+                  >
+                    Charger
+                  </Button>
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => {
+                      const name = voiceDesignPresetName.trim();
+                      if (name.length < 2) {
+                        window.alert("Nom de preset trop court.");
+                        return;
+                      }
+                      const id = name.toLowerCase().replace(/\s+/g, "-");
+                      const existing = voiceDesignPresets.find((item) => item.id === id);
+                      if (existing && !window.confirm(`Remplacer le preset "${existing.label}" ?`)) {
+                        return;
+                      }
+                      const options: Record<string, unknown> = {};
+                      [
+                        "design_gender",
+                        "design_age",
+                        "design_pitch",
+                        "design_speed",
+                        "design_volume",
+                        "design_accent",
+                        "design_emotion",
+                        "design_texture",
+                        "design_style",
+                      ].forEach((key) => {
+                        if (uiState.engine.params?.[key] !== undefined) {
+                          options[key] = uiState.engine.params[key];
+                        }
+                      });
+                      const instruct = String(uiState.engine.params?.instruct || "");
+                      const updated = [
+                        ...voiceDesignPresets.filter((item) => item.id !== id),
+                        { id, label: name, instruct, options },
+                      ].sort((a, b) => a.label.localeCompare(b.label));
+                      setVoiceDesignPresets(updated);
+                      setVoiceDesignPresetId(id);
+                    }}
+                  >
+                    Enregistrer
+                  </Button>
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => {
+                      if (voiceDesignPresetId === "none") return;
+                      const preset = voiceDesignPresets.find((item) => item.id === voiceDesignPresetId);
+                      if (!preset) return;
+                      if (!window.confirm(`Supprimer le preset "${preset.label}" ?`)) return;
+                      setVoiceDesignPresets((prev) => prev.filter((item) => item.id !== voiceDesignPresetId));
+                      setVoiceDesignPresetId("none");
+                    }}
+                    disabled={voiceDesignPresetId === "none"}
+                  >
+                    Supprimer
+                  </Button>
+                </div>
+
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium">Instruction</label>
+                  <Input
+                    value={String(uiState.engine.params?.instruct ?? "")}
+                    onChange={(event) => updateEngineParam("instruct", event.target.value)}
+                    placeholder="Style/intonation (optionnel)."
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-zinc-900">Guidage VoiceDesign</p>
+                    <p className="text-xs text-zinc-500">Selectionne des attributs simples pour generer l instruction.</p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => {
+                      const built = buildVoiceDesignInstruction(uiState.engine.params, uiState.engine.language);
+                      if (built) {
+                        updateEngineParam("instruct", built);
+                      }
+                    }}
+                  >
+                    Generer instruction
+                  </Button>
+                </div>
+
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium">Preset rapide</label>
+                  <div className="flex flex-wrap gap-2">
+                    {VOICE_DESIGN_PRESETS.map((preset) => (
+                      <Button
+                        key={preset.id}
+                        variant="outline"
+                        type="button"
+                        onClick={() => updateEngineParam("instruct", preset.instruct)}
+                      >
+                        {preset.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-[1fr_1fr]">
+                  {(
+                    [
+                      ["design_gender", "Genre", VOICE_DESIGN_OPTIONS.gender],
+                      ["design_age", "Age", VOICE_DESIGN_OPTIONS.age],
+                      ["design_pitch", "Pitch", VOICE_DESIGN_OPTIONS.pitch],
+                      ["design_speed", "Vitesse", VOICE_DESIGN_OPTIONS.speed],
+                      ["design_volume", "Volume", VOICE_DESIGN_OPTIONS.volume],
+                      ["design_accent", "Accent", VOICE_DESIGN_OPTIONS.accent],
+                      ["design_emotion", "Emotion", VOICE_DESIGN_OPTIONS.emotion],
+                      ["design_texture", "Texture", VOICE_DESIGN_OPTIONS.texture],
+                      ["design_style", "Style", VOICE_DESIGN_OPTIONS.style],
+                    ] as Array<[string, string, Array<{ value: string; label: string }>]>
+                  ).map(([key, label, choices]) => (
+                    <div key={key} className="grid gap-2">
+                      <label className="text-sm font-medium">{label}</label>
+                      <Select
+                        value={String(uiState.engine.params?.[key] ?? "")}
+                        onValueChange={(value) => updateEngineParam(key, value)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Choisir" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {choices.map((choice) => (
+                            <SelectItem key={choice.value} value={choice.value}>
+                              {choice.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
             {postFieldList.length > 0 && (
               <div className="grid gap-3">
                 <p className="text-xs font-semibold uppercase text-zinc-500">Post parametres</p>
                 <DynamicFields
                   fields={postFieldList}
-                  values={{ chatterbox_gap_ms: uiState.engine.chatterbox_gap_ms }}
+                  values={{ chunk_gap_ms: uiState.engine.chunk_gap_ms }}
                   context={context}
                   onChange={(key, value) => {
-                    if (key === "chatterbox_gap_ms") {
+                    if (key === "chunk_gap_ms") {
                       setUiState((prev) => ({
                         ...prev,
-                        engine: { ...prev.engine, chatterbox_gap_ms: Number(value) },
+                        engine: { ...prev.engine, chunk_gap_ms: Number(value) },
                       }));
                     }
                   }}

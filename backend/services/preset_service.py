@@ -59,6 +59,8 @@ def _legacy_to_ui_state(data: Dict[str, Any], preset_id: str) -> Dict[str, Any]:
         voice_id = ref_name
     gap_ms = data.get("inter_chunk_gap_ms")
     if gap_ms is None:
+        gap_ms = data.get("chunk_gap_ms")
+    if gap_ms is None:
         gap_ms = data.get("chatterbox_gap_ms") or 0
     post_enabled = bool(data.get("post_processing_enabled"))
     return {
@@ -69,7 +71,7 @@ def _legacy_to_ui_state(data: Dict[str, Any], preset_id: str) -> Dict[str, Any]:
             "engine_id": engine_id,
             "voice_id": voice_id,
             "params": params,
-            "chatterbox_gap_ms": int(gap_ms or 0),
+            "chunk_gap_ms": int(gap_ms or 0),
         },
         "post": {
             "edit_enabled": post_enabled,

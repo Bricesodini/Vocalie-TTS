@@ -46,6 +46,12 @@ fi
 API_PORT="${API_PORT:-8000}"
 API_HOST="${API_HOST:-127.0.0.1}"
 
+# Local development default: keep API key checks strict in prod, but allow
+# localhost calls when running the dev backend unless explicitly overridden.
+if [[ -z "${VOCALIE_TRUST_LOCALHOST:-}" ]]; then
+  export VOCALIE_TRUST_LOCALHOST=1
+fi
+
 if [[ -z "${VOCALIE_CORS_ORIGINS:-}" ]]; then
   cors_origins="http://localhost:3000,http://127.0.0.1:3000"
   lan_ip=""

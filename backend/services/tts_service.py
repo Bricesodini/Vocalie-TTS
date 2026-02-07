@@ -200,7 +200,11 @@ def run_tts_job(
     if chatterbox_mode:
         engine_params.setdefault("chatterbox_mode", chatterbox_mode)
     if engine == "qwen3_custom":
-        engine_params["qwen3_mode"] = "custom_voice"
+        requested_mode = engine_params.get("qwen3_mode")
+        if requested_mode in {"custom_voice", "voice_design"}:
+            engine_params["qwen3_mode"] = requested_mode
+        else:
+            engine_params["qwen3_mode"] = "custom_voice"
     elif engine == "qwen3_clone":
         engine_params["qwen3_mode"] = "voice_clone"
 

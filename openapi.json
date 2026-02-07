@@ -2564,14 +2564,25 @@
             ],
             "title": "Voice Id"
           },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
           "params": {
             "additionalProperties": true,
             "type": "object",
             "title": "Params"
           },
-          "chatterbox_gap_ms": {
+          "chunk_gap_ms": {
             "type": "integer",
-            "title": "Chatterbox Gap Ms",
+            "title": "Chunk Gap Ms",
             "default": 0
           }
         },

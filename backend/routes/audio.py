@@ -39,17 +39,25 @@ def _peak_dbfs(peak: float) -> float:
     return 20.0 * math.log10(peak)
 
 
-async def _save_upload(upload: UploadFile) -> Path:
+async def _save_upload(upload: UploadFile, *, max_bytes: int) -> Path:
     suffix = Path(upload.filename or "audio").suffix or ".bin"
     upload_dir = backend_config.WORK_DIR / "uploads" / "audiosr"
     upload_dir.mkdir(parents=True, exist_ok=True)
     path = upload_dir / f"audiosr_{uuid.uuid4().hex}{suffix}"
-    with path.open("wb") as handle:
-        while True:
-            chunk = await upload.read(1024 * 1024)
-            if not chunk:
-                break
-            handle.write(chunk)
+    written = 0
+    try:
+        with path.open("wb") as handle:
+            while True:
+                chunk = await upload.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    raise HTTPException(status_code=413, detail="file_too_large")
+                handle.write(chunk)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
     return path
 
 
@@ -168,7 +176,7 @@ async def enhance_audio(
         "input_cutoff": max(0, int(input_cutoff)),
     }
 
-    upload_path = await _save_upload(file)
+    upload_path = await _save_upload(file, max_bytes=int(backend_config.VOCALIE_MAX_UPLOAD_BYTES))
     wav_path = None
     try:
         wav_path = _ensure_wav(upload_path)

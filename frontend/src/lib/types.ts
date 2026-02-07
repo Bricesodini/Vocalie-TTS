@@ -63,7 +63,7 @@ export type UIStateEngine = {
   voice_id?: string | null;
   language?: string | null;
   params: Record<string, unknown>;
-  chatterbox_gap_ms: number;
+  chunk_gap_ms: number;
 };
 
 export type UIStatePost = {

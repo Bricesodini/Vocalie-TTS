@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hmac
 import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Request
+from fastapi import HTTPException, Request
+import backend.config as backend_config
 
 
 LOCAL_HOSTS = {"127.0.0.1", "::1", "testclient"}
@@ -45,12 +47,20 @@ def required_api_key() -> Optional[str]:
 
 
 def is_authorized(request: Request) -> bool:
-    if is_local_request(request):
+    if backend_config.VOCALIE_TRUST_LOCALHOST and is_local_request(request):
         return True
     required = required_api_key()
     if not required:
         return False
-    return extract_api_key(request) == required
+    provided = extract_api_key(request)
+    if not provided:
+        return False
+    return hmac.compare_digest(provided, required)
+
+
+def require_authorized(request: Request) -> None:
+    if not is_authorized(request):
+        raise HTTPException(status_code=403, detail="forbidden")
 
 
 def safe_join_under(root: Path, user_path: str) -> Path:
@@ -73,4 +83,3 @@ def safe_filename(name: str) -> str:
     if ".." in candidate:
         raise ValueError("invalid_name")
     return candidate
-

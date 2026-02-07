@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import logging
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from backend.config import API_VERSION, VOCALIE_CORS_ORIGINS, WORK_DIR
+from backend.config import (
+    API_VERSION,
+    VOCALIE_ALLOWED_HOSTS,
+    VOCALIE_CORS_ORIGINS,
+    VOCALIE_ENABLE_API_DOCS,
+    WORK_DIR,
+)
 from backend.routes import assets, audio, chunks, health, info, jobs, prep, presets, tts
-from backend.security import is_authorized
+from backend.security import require_authorized
 from backend.services.work_service import clean_work_dir
 
 
@@ -24,12 +31,23 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Chatterbox TTS API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="Chatterbox TTS API",
+    version="0.1.0",
+    lifespan=lifespan,
+    docs_url="/v1/docs" if VOCALIE_ENABLE_API_DOCS else None,
+    redoc_url="/v1/redoc" if VOCALIE_ENABLE_API_DOCS else None,
+    openapi_url="/v1/openapi.json" if VOCALIE_ENABLE_API_DOCS else None,
+)
+
+allowed_hosts = [host for host in VOCALIE_ALLOWED_HOSTS if host != "*"]
+if "*" in VOCALIE_ALLOWED_HOSTS:
+    logging.getLogger("chatterbox_api").warning("VOCALIE_ALLOWED_HOSTS wildcard is not supported; ignoring")
+if allowed_hosts:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
 cors_origins = [origin for origin in VOCALIE_CORS_ORIGINS if origin != "*"]
 if "*" in VOCALIE_CORS_ORIGINS:
-    import logging
-
     logging.getLogger("chatterbox_api").warning("VOCALIE_CORS_ORIGINS wildcard is not supported; ignoring")
 
 app.add_middleware(
@@ -43,19 +61,17 @@ app.add_middleware(
 
 @app.middleware("http")
 async def add_version_header(request: Request, call_next):
-    if request.url.path.startswith("/v1") and not is_authorized(request):
-        return JSONResponse(status_code=403, content={"detail": "forbidden"})
     response = await call_next(request)
     response.headers["X-Vocalie-Version"] = API_VERSION
     return response
 
 
 app.include_router(health.router)
-app.include_router(info.router)
-app.include_router(tts.router)
-app.include_router(presets.router)
-app.include_router(jobs.router)
-app.include_router(assets.router)
-app.include_router(prep.router)
-app.include_router(chunks.router)
-app.include_router(audio.router)
+app.include_router(info.router, dependencies=[Depends(require_authorized)])
+app.include_router(tts.router, dependencies=[Depends(require_authorized)])
+app.include_router(presets.router, dependencies=[Depends(require_authorized)])
+app.include_router(jobs.router, dependencies=[Depends(require_authorized)])
+app.include_router(assets.router, dependencies=[Depends(require_authorized)])
+app.include_router(prep.router, dependencies=[Depends(require_authorized)])
+app.include_router(chunks.router, dependencies=[Depends(require_authorized)])
+app.include_router(audio.router, dependencies=[Depends(require_authorized)])
