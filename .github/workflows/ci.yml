@@ -18,8 +18,33 @@ jobs:
           python -m pip install -U pip
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
+      - name: Security baseline guardrails (prod profile)
+        run: |
+          chmod +x scripts/check-security-baseline.sh
+          VOCALIE_API_KEY="ci_prod_security_baseline_key_1234567890" \
+          VOCALIE_TRUST_LOCALHOST="0" \
+          VOCALIE_ENABLE_API_DOCS="0" \
+          VOCALIE_ALLOWED_HOSTS="api.example.com" \
+          VOCALIE_TRUSTED_PROXIES="127.0.0.1" \
+          VOCALIE_MAX_UPLOAD_BYTES="26214400" \
+          bash scripts/check-security-baseline.sh --prod
+      - name: Security baseline catches insecure config
+        run: |
+          chmod +x scripts/check-security-baseline.sh
+          if VOCALIE_API_KEY="change-me" \
+             VOCALIE_TRUST_LOCALHOST="1" \
+             VOCALIE_ENABLE_API_DOCS="1" \
+             VOCALIE_ALLOWED_HOSTS="*" \
+             VOCALIE_TRUSTED_PROXIES="*" \
+             VOCALIE_MAX_UPLOAD_BYTES="0" \
+             bash scripts/check-security-baseline.sh --prod; then
+            echo "Expected security baseline check to fail for insecure configuration."
+            exit 1
+          fi
       - name: Pytest
         run: pytest -q
+      - name: Rate-limit fairness simulation
+        run: python scripts/check-rate-limit-fairness.py
 
   frontend:
     runs-on: ubuntu-latest

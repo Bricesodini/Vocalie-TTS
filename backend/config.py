@@ -44,6 +44,10 @@ VOCALIE_ALLOWED_HOSTS = _parse_csv_env(
 
 VOCALIE_RATE_LIMIT_RPS = float(os.environ.get("VOCALIE_RATE_LIMIT_RPS") or "5")
 VOCALIE_RATE_LIMIT_BURST = int(os.environ.get("VOCALIE_RATE_LIMIT_BURST") or "10")
+VOCALIE_TRUSTED_PROXIES = _parse_csv_env(
+    "VOCALIE_TRUSTED_PROXIES",
+    ["127.0.0.1", "::1", "localhost", "testclient"],
+)
 VOCALIE_MAX_UPLOAD_BYTES = int(os.environ.get("VOCALIE_MAX_UPLOAD_BYTES") or str(25 * 1024 * 1024))
 
 VOCALIE_BARK_TIMEOUT_S = float(os.environ.get("VOCALIE_BARK_TIMEOUT_S") or "600")

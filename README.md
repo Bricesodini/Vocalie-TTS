@@ -66,6 +66,7 @@ Le frontend (Next.js) et Gradio sont deux clients distincts de cette API.
 - [Installation par plateforme](#installation-par-plateforme)
 - [Voix et references](#voix-et-references)
 - [Reproductibilite](#reproductibilite-lockfiles)
+- [Security Runbook](#security-runbook)
 - [API endpoints (v1)](#api-endpoints-v1)
 - [Troubleshooting](#troubleshooting)
 - [Scripts](#scripts-optionnel)
@@ -94,7 +95,32 @@ Variables utiles (voir aussi `.env.example`) :
 - `VOCALIE_ENABLE_API_DOCS`
 - `VOCALIE_EXPOSE_SYSTEM_INFO`
 - `VOCALIE_ALLOWED_HOSTS`
+- `VOCALIE_TRUSTED_PROXIES`
 - `VOCALIE_MAX_UPLOAD_BYTES`
+
+Verification rapide de la baseline securite (profil production) :
+
+```bash
+VOCALIE_API_KEY='<cle-longue-et-aleatoire>' \
+VOCALIE_TRUST_LOCALHOST=0 \
+VOCALIE_ENABLE_API_DOCS=0 \
+VOCALIE_ALLOWED_HOSTS='api.example.com' \
+VOCALIE_TRUSTED_PROXIES='10.0.0.10' \
+VOCALIE_MAX_UPLOAD_BYTES=26214400 \
+bash ./scripts/check-security-baseline.sh --prod
+```
+
+Check de fairness rate-limit (simulation locale) :
+
+```bash
+python ./scripts/check-rate-limit-fairness.py
+```
+
+## Security Runbook
+
+Le runbook operationnel est disponible ici :
+
+- `docs/security-runbook.md`
 
 ---
 
