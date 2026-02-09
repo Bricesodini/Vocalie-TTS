@@ -18,7 +18,7 @@ Vocalie-TTS s'adresse aux createurs audio/video qui recherchent :
 - Adaptation automatique des anagrammes et termes specifiques en phonetique via un glossaire
 - Placement manuel des chunks pour segmenter finement les generations
 - Reglages specifiques par moteur TTS
-  - pour Chatterbox : controle explicite de la duree des silences entre les chunks
+  - pour Chatterbox et Qwen3 : controle explicite de la duree des silences entre les chunks (`chunk_gap_ms`)
 - Post-traitement audio optionnel :
   - nettoyage des silences en debut et fin
   - normalisation du niveau sonore (dBFS)
@@ -61,6 +61,7 @@ Le frontend (Next.js) et Gradio sont deux clients distincts de cette API.
 - [Architecture](#architecture)
 - [Objectifs](#objectifs)
 - [Migration AudioSR](#migration-audiosr)
+- [Securite API](#securite-api)
 - [Quickstart](#quickstart)
 - [Installation par plateforme](#installation-par-plateforme)
 - [Voix et references](#voix-et-references)
@@ -74,7 +75,26 @@ Le frontend (Next.js) et Gradio sont deux clients distincts de cette API.
 
 ## Migration AudioSR
 
-La migration AudioSR est developpee sur la branche `feature/audiosr-migration` afin de garder `main` stable.
+La migration AudioSR est integree dans `main`.
+
+---
+
+## Securite API
+
+L'API `/v1/*` est protegee par cle API par defaut (sauf `/v1/health`).
+
+- En production, definir `VOCALIE_API_KEY` et laisser `VOCALIE_TRUST_LOCALHOST=0`.
+- En developpement local, `scripts/dev-backend.sh` force `VOCALIE_TRUST_LOCALHOST=1` si non defini, pour eviter les `403` en local.
+- Pour tester le mode strict localement, exporte explicitement `VOCALIE_TRUST_LOCALHOST=0` puis ajoute `X-API-Key` dans les appels.
+
+Variables utiles (voir aussi `.env.example`) :
+
+- `VOCALIE_API_KEY`
+- `VOCALIE_TRUST_LOCALHOST`
+- `VOCALIE_ENABLE_API_DOCS`
+- `VOCALIE_EXPOSE_SYSTEM_INFO`
+- `VOCALIE_ALLOWED_HOSTS`
+- `VOCALIE_MAX_UPLOAD_BYTES`
 
 ---
 
@@ -93,6 +113,7 @@ brew install python@3.11 ffmpeg
 
 git clone https://github.com/Bricesodini/Vocalie-TTS.git
 cd Vocalie-TTS
+cp .env.example .env
 
 ./scripts/bootstrap.sh min
 
@@ -262,6 +283,12 @@ curl http://127.0.0.1:8000/v1/tts/engines
 curl "http://127.0.0.1:8000/v1/tts/voices?engine=chatterbox_native"
 ```
 
+Mode strict (si `VOCALIE_TRUST_LOCALHOST=0`) :
+
+```bash
+curl -H "X-API-Key: <votre-cle>" http://127.0.0.1:8000/v1/tts/engines
+```
+
 ### Capabilities (AudioSR)
 
 ```bash
@@ -281,7 +308,7 @@ curl -X POST http://127.0.0.1:8000/v1/audio/enhance \
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/tts/jobs \
   -H "Content-Type: application/json" \
-  -d '{ "text": "Bonjour", "engine": "piper" }'
+  -d '{ "text": "Bonjour", "engine": "qwen3_custom", "post_params": { "chunk_gap_ms": 150 } }'
 ```
 
 ---
