@@ -16,7 +16,8 @@ if [[ ! -d node_modules ]]; then
 fi
 
 if [[ -z "${NEXT_PUBLIC_API_BASE:-}" ]]; then
-  export NEXT_PUBLIC_API_BASE="http://127.0.0.1:8000"
+  export NEXT_PUBLIC_API_BASE="http://127.0.0.1:8018"
 fi
 
+export PORT="${PORT:-3018}"
 npm run dev

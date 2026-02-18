@@ -7,6 +7,7 @@ Vocalie-TTS est une interface locale dediee a la production de voix off en franc
 Le coeur du projet est la generation TTS. L'outil est particulierement optimise pour Chatterbox, notamment pour les usages necessitant un decoupage precis du texte et un controle fin du rythme (chunking manuel).
 
 Vocalie-TTS s'adresse aux createurs audio/video qui recherchent :
+
 - un controle explicite du rendu,
 - une generation locale sans dependance cloud,
 - un pipeline fiable, oriente production.
@@ -157,10 +158,12 @@ cd ..
 ```
 
 Ouvrir ensuite :
-- Frontend : http://localhost:3000
-- API : http://127.0.0.1:8000
+
+- Frontend : http://localhost:3018
+- API : http://127.0.0.1:8018
 
 AudioSR (amelioration audio) est installe par defaut via bootstrap.
+
 ```bash
 ./scripts/install-audiosr-venv.sh
 ```
@@ -183,16 +186,19 @@ Le frontend utilise `npm ci` avec un lockfile Linux-only (CI stricte).
 ### macOS
 
 1. Bootstrap backend + moteurs :
+
 ```bash
 ./scripts/bootstrap.sh min
 ```
 
 AudioSR (installe par defaut) :
+
 ```bash
 ./scripts/install-audiosr-venv.sh
 ```
 
 2. Precharger les poids Chatterbox (cache HF) :
+
 ```bash
 ./scripts/install-chatterbox-weights.sh ResembleAI/chatterbox
 export HUGGINGFACE_TOKEN=<token-avec-acces>
@@ -200,17 +206,20 @@ export HUGGINGFACE_TOKEN=<token-avec-acces>
 ```
 
 3. Installer les dependances frontend localement :
+
 ```bash
 cd frontend
 npm install --include=optional --no-audit --progress=false
 ```
 
 4. Lancer l'ensemble :
+
 ```bash
 ./scripts/dev-macos.sh
 ```
 
 Avant tout commit, annule les changements eventuels du lockfile :
+
 ```bash
 git checkout -- frontend/package-lock.json
 ```
@@ -224,6 +233,7 @@ pwsh ./scripts/dev-windows.ps1
 ```
 
 Option GPU Nvidia :
+
 ```powershell
 setx VOCALIE_ENABLE_CUDA 1
 ```
@@ -282,6 +292,7 @@ Automatiser ce qui est repetitif, garder explicite ce qui influence le son.
 - `requirements-chatterbox.lock.txt`
 - `requirements-audiosr.lock.txt`
 - Generation :
+
 ```bash
 ./scripts/lock-requirements.sh
 ```
@@ -299,32 +310,32 @@ Le lockfile est source de verite. Aucun auto-fix silencieux.
 ### Sante
 
 ```bash
-curl http://127.0.0.1:8000/v1/health
+curl http://127.0.0.1:8018/v1/health
 ```
 
 ### Engines et voix
 
 ```bash
-curl http://127.0.0.1:8000/v1/tts/engines
-curl "http://127.0.0.1:8000/v1/tts/voices?engine=chatterbox_native"
+curl http://127.0.0.1:8018/v1/tts/engines
+curl "http://127.0.0.1:8018/v1/tts/voices?engine=chatterbox_native"
 ```
 
 Mode strict (si `VOCALIE_TRUST_LOCALHOST=0`) :
 
 ```bash
-curl -H "X-API-Key: <votre-cle>" http://127.0.0.1:8000/v1/tts/engines
+curl -H "X-API-Key: <votre-cle>" http://127.0.0.1:8018/v1/tts/engines
 ```
 
 ### Capabilities (AudioSR)
 
 ```bash
-curl http://127.0.0.1:8000/v1/capabilities
+curl http://127.0.0.1:8018/v1/capabilities
 ```
 
 ### Amelioration audio (AudioSR)
 
 ```bash
-curl -X POST http://127.0.0.1:8000/v1/audio/enhance \
+curl -X POST http://127.0.0.1:8018/v1/audio/enhance \
   -F "file=@tests/assets/audiosr_sample.wav" \
   -F "engine=audiosr"
 ```
@@ -332,7 +343,7 @@ curl -X POST http://127.0.0.1:8000/v1/audio/enhance \
 ### Generation (extrait)
 
 ```bash
-curl -X POST http://127.0.0.1:8000/v1/tts/jobs \
+curl -X POST http://127.0.0.1:8018/v1/tts/jobs \
   -H "Content-Type: application/json" \
   -d '{ "text": "Bonjour", "engine": "qwen3_custom", "post_params": { "chunk_gap_ms": 150 } }'
 ```

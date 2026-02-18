@@ -10,7 +10,7 @@ cd "$ROOT_DIR" || exit 1
 ./scripts/stop.sh || true
 
 # Kill by port (handle multiple PIDs safely).
-for port in 3100 8100; do
+for port in 3018 8018; do
   for pid in $(/usr/sbin/lsof -ti tcp:"$port" 2>/dev/null || true); do
     kill -9 "$pid" || true
   done

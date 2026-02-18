@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 
-const apiBase = process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000";
+const apiBase = process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8018";
 const isProd = process.env.NODE_ENV === "production";
 
 const nextConfig: NextConfig = {

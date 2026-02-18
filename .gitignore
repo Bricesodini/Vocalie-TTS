@@ -29,3 +29,5 @@ Ref_audio/*
 presets/*
 !presets/.gitkeep
 !presets/example.json
+# Codex reports (auto-generated)
+reports/

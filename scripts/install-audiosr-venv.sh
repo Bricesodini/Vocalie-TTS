@@ -24,7 +24,7 @@ fi
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
 
-pip install -U pip setuptools wheel
+pip install -U pip "setuptools<81" wheel
 if [[ -f "$ROOT_DIR/requirements-audiosr.lock.txt" ]]; then
   pip install -r "$ROOT_DIR/requirements-audiosr.lock.txt"
 else
@@ -33,6 +33,13 @@ fi
 
 echo "Checking AudioSR dependencies..."
 "$VENV_DIR/bin/python" -c "import cog, pyloudnorm, matplotlib, torchcodec; print('deps ok')"
+"$VENV_DIR/bin/python" - <<'PY'
+try:
+    import pkg_resources  # noqa: F401
+except ImportError as exc:
+    raise RuntimeError("setuptools version incompatible: pkg_resources missing") from exc
+print("pkg_resources ok")
+PY
 "$VENV_DIR/bin/python" -c "import librosa, soundfile; print('audio io ok')"
 "$VENV_DIR/bin/python" -c "import sys; print(sys.version)"
 

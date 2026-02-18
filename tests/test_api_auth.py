@@ -21,7 +21,7 @@ def test_preflight_options_does_not_require_api_key(api_client):
     resp = api_client.options(
         "/v1/capabilities",
         headers={
-            "Origin": "http://localhost:3000",
+            "Origin": "http://localhost:3018",
             "Access-Control-Request-Method": "GET",
             "X-API-Key": "",
         },

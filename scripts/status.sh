@@ -32,7 +32,7 @@ check_pid "cockpit"
 if command -v lsof >/dev/null 2>&1; then
   echo ""
   echo "Ports:"
-  for port in 8000 3000 7860; do
+  for port in 8018 3018 7860; do
     if lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
       echo "- $port: listening"
     else

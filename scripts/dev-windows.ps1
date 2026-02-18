@@ -37,10 +37,10 @@ function Start-Proc {
 Install-Frontend
 
 Start-Proc -Name 'backend' -Cmd "bash scripts/dev-backend.sh"
-Start-Proc -Name 'frontend' -Cmd "cd $FrontendDir; npm run dev"
+Start-Proc -Name 'frontend' -Cmd "cd $FrontendDir; `$env:PORT='3018'; `$env:NEXT_PUBLIC_API_BASE='http://127.0.0.1:8018'; npm run dev"
 
-Write-Host "Backend: http://127.0.0.1:8000"
-Write-Host "Frontend: http://localhost:3000"
+Write-Host "Backend: http://127.0.0.1:8018"
+Write-Host "Frontend: http://localhost:3018"
 Write-Host "PIDs stored in $RunDir"
 Write-Host "Press Ctrl+C to stop all; use scripts/stop.sh from a Git Bash shell."
 

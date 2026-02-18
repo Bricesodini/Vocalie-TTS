@@ -22,8 +22,8 @@ if [[ "${WITH_COCKPIT:-0}" == "1" ]]; then
   start_process "cockpit" "python ui_gradio/cockpit.py"
 fi
 
-echo "Backend: http://127.0.0.1:8000"
-echo "Frontend: http://localhost:3000"
+echo "Backend: http://127.0.0.1:8018"
+echo "Frontend: http://localhost:3018"
 if [[ "${WITH_COCKPIT:-0}" == "1" ]]; then
   echo "Cockpit: http://127.0.0.1:7860"
 fi

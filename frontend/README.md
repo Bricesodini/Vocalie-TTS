@@ -14,18 +14,18 @@ pnpm dev
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3018](http://localhost:3018) with your browser to see the result.
 
 ## API configuration
 
 The frontend uses a simple precedence rule for API access:
 
-1) If `NEXT_PUBLIC_API_BASE` is set, requests go directly to that absolute base URL.
-2) Otherwise, the app uses relative `/v1/*` paths which are proxied by Next.js
+1. If `NEXT_PUBLIC_API_BASE` is set, requests go directly to that absolute base URL.
+2. Otherwise, the app uses relative `/v1/*` paths which are proxied by Next.js
    via the rewrite in `next.config.ts`.
 
 For local dev, leave `NEXT_PUBLIC_API_BASE` unset and keep the API running on
-`http://127.0.0.1:8000` so the rewrite works out of the box.
+`http://127.0.0.1:8018` so the rewrite works out of the box.
 
 ## NPM-only workspace
 

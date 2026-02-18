@@ -9,7 +9,7 @@ import gradio as gr
 import httpx
 
 
-API_BASE_URL = os.environ.get("CHATTERBOX_API_URL", "http://127.0.0.1:8000")
+API_BASE_URL = os.environ.get("CHATTERBOX_API_URL", "http://127.0.0.1:8018")
 
 
 def _get(url: str, params: dict | None = None) -> dict:

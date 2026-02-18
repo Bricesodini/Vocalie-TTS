@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_DIR="$ROOT_DIR/.run"
 FRONTEND_DIR="$ROOT_DIR/frontend"
+FRONTEND_PORT="${PORT:-3018}"
+BACKEND_PORT="${API_PORT:-8018}"
 
 if ! command -v node >/dev/null 2>&1; then
   echo "node not found. Install Node.js >= 20 and try again." >&2
@@ -11,6 +13,15 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 mkdir -p "$RUN_DIR"
+
+assert_port_free() {
+  local port="$1"
+  if /usr/sbin/lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "Port $port already in use. Stop the running process first." >&2
+    /usr/sbin/lsof -nP -iTCP:"$port" -sTCP:LISTEN >&2 || true
+    exit 1
+  fi
+}
 
 install_frontend_deps() {
   if [[ -d "$FRONTEND_DIR/node_modules" ]]; then
@@ -35,11 +46,17 @@ start_process() {
 
 install_frontend_deps
 
-start_process "backend" "$ROOT_DIR/scripts/dev-backend.sh"
-start_process "frontend" "cd $FRONTEND_DIR && NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE:-http://127.0.0.1:8000} npm run dev"
+# Clean up stale PIDs from previous runs before checking ports.
+"$ROOT_DIR/scripts/stop.sh" >/dev/null 2>&1 || true
 
-echo "Backend: http://127.0.0.1:8000"
-echo "Frontend: http://localhost:3000"
+assert_port_free "$BACKEND_PORT"
+assert_port_free "$FRONTEND_PORT"
+
+start_process "backend" "$ROOT_DIR/scripts/dev-backend.sh"
+start_process "frontend" "cd $FRONTEND_DIR && PORT=$FRONTEND_PORT NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE:-http://127.0.0.1:$BACKEND_PORT} npm run dev"
+
+echo "Backend: http://127.0.0.1:$BACKEND_PORT"
+echo "Frontend: http://localhost:$FRONTEND_PORT"
 echo "PIDs stored in $RUN_DIR"
 echo "Press Ctrl+C to stop all."
 

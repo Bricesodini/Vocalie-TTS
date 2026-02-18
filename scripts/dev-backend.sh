@@ -43,7 +43,7 @@ else
   exit 1
 fi
 
-API_PORT="${API_PORT:-8000}"
+API_PORT="${API_PORT:-8018}"
 API_HOST="${API_HOST:-127.0.0.1}"
 
 # Local development default: keep API key checks strict in prod, but allow
@@ -53,7 +53,7 @@ if [[ -z "${VOCALIE_TRUST_LOCALHOST:-}" ]]; then
 fi
 
 if [[ -z "${VOCALIE_CORS_ORIGINS:-}" ]]; then
-  cors_origins="http://localhost:3000,http://127.0.0.1:3000"
+  cors_origins="http://localhost:3018,http://127.0.0.1:3018"
   lan_ip=""
   if command -v ipconfig >/dev/null 2>&1; then
     iface=""
@@ -79,7 +79,7 @@ if [[ -z "${VOCALIE_CORS_ORIGINS:-}" ]]; then
     lan_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
   fi
   if [[ -n "$lan_ip" ]]; then
-    cors_origins="${cors_origins},http://${lan_ip}:3000"
+    cors_origins="${cors_origins},http://${lan_ip}:3018"
   fi
   export VOCALIE_CORS_ORIGINS="$cors_origins"
 fi
