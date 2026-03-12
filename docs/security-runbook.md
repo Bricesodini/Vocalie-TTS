@@ -3,6 +3,7 @@
 ## Scope
 
 This runbook defines the mandatory security checks for production-like deployments.
+Canonical environment variable policy lives in `docs/ENV_POLICY.md`.
 
 ## Required environment baseline (prod)
 

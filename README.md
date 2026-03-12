@@ -29,9 +29,10 @@ Vocalie-TTS s'adresse aux createurs audio/video qui recherchent :
 
 ---
 
-## A venir
+## Roadmap (hors perimetre d'audit courant)
 
 - Integration d'un LLM local pour ameliorer le texte et l'adapter a une duree cible, sans modification implicite du contenu.
+- Les elements de cette section sont des intentions futures et ne font pas partie du perimetre gele ci-dessous.
 
 ---
 
@@ -56,13 +57,61 @@ Le frontend (Next.js) et Gradio sont deux clients distincts de cette API.
 
 ---
 
+## Perimetre d'audit (gele)
+
+Baseline: `README.md` + docs de reference, etat au commit courant.
+
+### In-scope
+
+- API `/v1/*` pour generation TTS, gestion voix refs, jobs et post-traitement audio.
+- Frontend Next.js comme UI de production consommant l'API.
+- Pipeline local-first (execution locale, fichiers de travail dans `work/` et sorties dans `output/`).
+- Controles de securite operationnels (cle API, hosts/proxies allowlist, rate limiting, limites de payload).
+
+### Out-of-scope / Non-goals
+
+- Exposition directe de l'API sur Internet public (voir `SECURITY.md`).
+- UI Gradio comme interface de production (usage debug/cockpit uniquement).
+- Modifications implicites du texte source pour \"ameliorer\" le style sans action explicite utilisateur.
+- Post-traitements audio appliques automatiquement sans demande explicite.
+- Support de formats de sortie autres que `wav` sur les endpoints de generation actuels.
+
+---
+
+## Cas d'usage critiques
+
+1. Generer une voix-off locale a partir d'un texte avec un moteur TTS choisi.
+   - Entree: texte + moteur + options.
+   - Sortie: job cree puis fichier audio dans `output/`.
+   - Exclusion: aucune re-ecriture implicite du texte.
+2. Cloner une voix depuis une reference audio locale (`Ref_audio/`) pour les moteurs compatibles.
+   - Entree: fichier ref + choix moteur compatible.
+   - Sortie: generation avec voix referencee.
+   - Exclusion: moteurs non compatibles reference voice.
+3. Ameliorer un audio via AudioSR en mode optionnel.
+   - Entree: fichier audio + parametres AudioSR.
+   - Sortie: audio ameliore.
+   - Exclusion: execution auto d'AudioSR sur toutes les generations.
+4. Operer en mode production avec baseline securite stricte.
+   - Entree: variables env de securite + cle API.
+   - Sortie: endpoints proteges, docs API desactivees en prod, bornes reseau explicites.
+   - Exclusion: confiance implicite localhost en production.
+
+---
+
 ## Sommaire
 
 - [Presentation](#presentation)
 - [Architecture](#architecture)
 - [Objectifs](#objectifs)
+- [Perimetre d'audit (gele)](#perimetre-daudit-gele)
+- [Cas d'usage critiques](#cas-dusage-critiques)
 - [Migration AudioSR](#migration-audiosr)
 - [Securite API](#securite-api)
+- [Invariants critiques](docs/invariants.md)
+- [Frontieres systeme](docs/system-boundaries.md)
+- [Politique d'environnement](docs/ENV_POLICY.md)
+- [Index documentation](docs/INDEX.md)
 - [Quickstart](#quickstart)
 - [Installation par plateforme](#installation-par-plateforme)
 - [Voix et references](#voix-et-references)
@@ -98,6 +147,9 @@ Variables utiles (voir aussi `.env.example`) :
 - `VOCALIE_ALLOWED_HOSTS`
 - `VOCALIE_TRUSTED_PROXIES`
 - `VOCALIE_MAX_UPLOAD_BYTES`
+
+La politique canonique des variables d'environnement est maintenue dans `docs/ENV_POLICY.md`.
+Le runbook d'exploitation securite est maintenu dans `docs/security-runbook.md`.
 
 Verification rapide de la baseline securite (profil production) :
 
