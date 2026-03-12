@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import platform
-from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
@@ -13,10 +12,6 @@ from tts_backends import list_backends
 
 
 router = APIRouter(prefix="/v1")
-
-
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 @router.get("/info", response_model=InfoResponse)

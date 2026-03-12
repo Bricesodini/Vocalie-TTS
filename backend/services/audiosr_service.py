@@ -11,6 +11,7 @@ from typing import Optional
 import soundfile as sf
 
 import backend.config as backend_config
+from backend.utils.time import utc_now
 from output_paths import ensure_unique_path, sanitize_filename
 
 
@@ -21,10 +22,6 @@ _AUDIOSR_IMPORT_ERROR: Optional[Exception] = None
 
 class FeatureDisabledError(RuntimeError):
     pass
-
-
-def _utc_now() -> dt.datetime:
-    return dt.datetime.now(dt.timezone.utc)
 
 
 def audiosr_python_path() -> Optional[Path]:
@@ -88,7 +85,7 @@ def log_audiosr_status() -> None:
 
 
 def build_output_paths(input_name: str) -> tuple[Path, Path]:
-    date_folder = _utc_now().strftime("%Y-%m-%d")
+    date_folder = utc_now().strftime("%Y-%m-%d")
     output_dir = backend_config.OUTPUT_DIR / date_folder / "audiosr"
     sanitized = sanitize_filename(input_name) or "audio"
     filename = f"{sanitized}.audiosr.wav"

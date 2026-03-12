@@ -14,10 +14,6 @@ from backend.security import safe_filename
 PRESET_SUFFIX = ".json"
 
 
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
 def _preset_path(preset_id: str) -> Path:
     safe_id = safe_filename(str(preset_id))
     return PRESETS_DIR / f"{safe_id}{PRESET_SUFFIX}"

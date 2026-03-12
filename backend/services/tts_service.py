@@ -33,11 +33,8 @@ from text_tools import (
 from tts_backends import get_backend
 from tts_backends.base import BackendUnavailableError
 from audio_defaults import SILENCE_MIN_MS, SILENCE_THRESHOLD
+from backend.utils.time import utc_now
 from tts_pipeline import generate_raw_wav
-
-
-def _utc_now() -> dt.datetime:
-    return dt.datetime.now(dt.timezone.utc)
 
 
 def _single_chunk(text: str, *, reason: str) -> Optional[ChunkInfo]:
@@ -187,7 +184,7 @@ def run_tts_job(
 
     progress_cb(0.20)
 
-    now = _utc_now()
+    now = utc_now()
     session_slug = build_session_slug(normalized_text, export.get("filename"))
     session_dir = create_session_dir(WORK_DIR, now, session_slug)
     raw_path = get_take_path_global_raw(session_dir, "v1")

@@ -32,9 +32,6 @@ function buildUrl(path: string, params?: Record<string, string | number | boolea
 
 export async function apiGet<T>(path: string, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
   const url = buildUrl(path, params);
-  if (process.env.NODE_ENV === "development") {
-    console.debug("[api] GET", { url });
-  }
   const resp = await fetch(url, { cache: "no-store" });
   if (!resp.ok) {
     throw new Error(`${resp.status} ${resp.statusText}`);
@@ -102,14 +99,7 @@ export class MissingEngineIdError extends Error {
 
 export async function fetchVoices(engineId: string): Promise<VoicesResponse> {
   if (!engineId) {
-    if (process.env.NODE_ENV === "development") {
-      console.warn("[voices] missing engineId", { engineId });
-      console.trace("[voices] callsite");
-    }
     return { engine: "", voices: [] };
-  }
-  if (process.env.NODE_ENV === "development") {
-    console.debug("[voices] fetch", { engineId, url: `/v1/tts/voices?engine=${engineId}` });
   }
   return apiGet("/v1/tts/voices", { engine: engineId });
 }

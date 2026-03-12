@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from backend.config import ASSETS_META_DIR, OUTPUT_DIR
 from backend.security import safe_filename
+from backend.utils.time import utc_now
 
 
 META_SUFFIX = ".json"
-
-
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _meta_path(asset_id: str) -> Path:
@@ -24,7 +20,7 @@ def _meta_path(asset_id: str) -> Path:
 def write_asset_meta(asset_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     meta = dict(payload)
     meta["asset_id"] = asset_id
-    meta.setdefault("created_at", _utc_now().isoformat(timespec="seconds"))
+    meta.setdefault("created_at", utc_now().isoformat(timespec="seconds"))
     path = _meta_path(asset_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(meta, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
