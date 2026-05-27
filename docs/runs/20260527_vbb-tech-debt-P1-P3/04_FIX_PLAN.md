@@ -206,3 +206,21 @@ The plan is explicit and complete. No execution has been performed. All three ru
 **First run to execute**: Run 01 (P1: backend boundary cleanup + path constant consolidation)
 
 **Vigilance escalation**: If Run 01 reveals circular dependencies or unexpected coupling not caught during analysis, stop and escalate before proceeding to Run 02.
+---
+
+## Execution result
+
+**All three runs completed successfully.**
+
+| Run | Status | Commit | What changed |
+|-----|--------|--------|--------------|
+| Run 01 (P1) | ✅ DONE | `c4c5b62` | 6 root modules → `backend/shared/`, re-export shims at root, path constants consolidated in `backend/config.py` |
+| Run 02 (P2) | ✅ DONE | `8ef3d33` | `tts_backends/catalog.py` created, ENGINE_CATALOG + ENGINE_ALIAS_MAP as single source, 4 consumers updated |
+| Run 03 (P3) | ✅ DONE | `03fac63` | 32 new contract tests for asset_service, work_service, config |
+
+**Debt items resolved:**
+- TD-002 (backend boundary violations): ✅ — `backend/` no longer imports from root-level modules; all imports go through `backend.shared.*`
+- TD-003 (triple path constants): ✅ — WORK_DIR/OUTPUT_DIR computed once in `backend/config.py`; `app.py` and `gradio_helpers.py` import from it
+- TD-005 (3-way engine alias map): ✅ — Single source in `tts_backends/catalog.py`; inline maps removed from `preset_service.py`
+- TD-013 (dual preset mgmt): ✅ partial — `state_manager.py` now uses `canonical_engine_id()` from catalog; dual validation model remains (full convergence in future P2 iteration)
+- TD-008 (untested services): ✅ — 32 new tests covering asset_service, work_service, config

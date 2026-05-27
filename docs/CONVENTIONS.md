@@ -90,7 +90,7 @@ Examples as plain text paths:
 - Step 2: Mark root monolith files as compatibility-boundary in docs and PR checklist; affected paths: `README.md`, `docs/CONVENTIONS.md`.
   - Risk note: accidental new features may still land there.
   - Rollback hint: block via review gate before merge.
-- Step 3: Consolidate duplicated helper conventions (time helper/util ownership); affected paths: `backend/services/*`, `backend/routes/*`.
+- Step 3 (DONE): Contract-level tests for asset_service, work_service, and config (32 tests). Affected paths: `tests/test_asset_service.py`, `tests/test_work_service.py`, `tests/test_config.py`.
   - Risk note: inconsistent helper semantics.
   - Rollback hint: retain old helper wrappers temporarily.
 - Step 4: Centralize env policy references and remove duplicated normative statements; affected paths: `backend/config.py`, `.env.example`, `README.md`, `docs/security-runbook.md`, `.github/workflows/ci.yml`.
