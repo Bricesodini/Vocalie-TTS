@@ -13,6 +13,7 @@ jobs:
         run: |
           grep -nE "^## Perimetre d'audit \\(gele\\)" README.md
           grep -nE "^### Out-of-scope / Non-goals" README.md
+          grep -nE "^## Cas d'usage critiques" README.md
       - name: Canonical docs guardrail
         run: |
           test -f docs/CONVENTIONS.md
@@ -26,6 +27,31 @@ jobs:
           grep -n "docs/CONVENTIONS.md" README.md
           grep -n "docs/invariants.md" README.md
           grep -n "docs/system-boundaries.md" README.md
+      - name: Scope change alignment guardrail
+        run: |
+          # If scope-critical docs are modified, verify companion docs are also touched.
+          # This prevents partial updates that break the documented perimeter.
+          CHANGED=$(git diff --name-only ${{ github.event.pull_request.base.sha || 'HEAD~1' }} 2>/dev/null || echo "")
+          if [ -z "$CHANGED" ]; then
+            echo "No diff available (push on main or shallow clone); skipping alignment check."
+            exit 0
+          fi
+          echo "Changed files:"
+          echo "$CHANGED"
+          # If README scope sections or invariants change, require system-boundaries and ENV_POLICY updates too
+          SCOPE_CHANGED=false
+          echo "$CHANGED" | grep -qE "^README\\.md$" && SCOPE_CHANGED=true
+          echo "$CHANGED" | grep -qE "^docs/invariants\\.md$" && SCOPE_CHANGED=true
+          echo "$CHANGED" | grep -qE "^docs/system-boundaries\\.md$" && SCOPE_CHANGED=true
+          if [ "$SCOPE_CHANGED" = "true" ]; then
+            echo "Scope-critical file changed — verifying companion docs alignment:"
+            echo "$CHANGED" | grep -qE "^(README\\.md|docs/invariants\\.md|docs/system-boundaries\\.md|docs/ENV_POLICY\\.md|docs/CONVENTIONS\\.md)$" && echo "OK: at least one companion scope doc updated" || { echo "FAIL: scope-critical file changed without updating companion docs (invariants, system-boundaries, ENV_POLICY, or CONVENTIONS). Update all related docs together."; exit 1; }
+          else
+            echo "No scope-critical files changed; alignment check passed."
+          fi
+      - name: AUDIT_STATUS guardrail
+        run: |
+          test -f docs/AUDIT_STATUS.md
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"

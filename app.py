@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import dataclasses
 import json
 import logging
 import multiprocessing as mp
@@ -100,6 +99,24 @@ from ui_gradio.engine_ui_helpers import (
     piper_voice_status_text,
     spec_visible,
     supported_languages_for,
+)
+from ui_gradio.gradio_helpers import (
+    append_log,
+    append_ui_log,
+    cleanup_tmp,
+    coerce_bool,
+    coerce_float,
+    coerce_int,
+    deserialize_chunks,
+    ensure_output_dir,
+    format_adjustment_log,
+    is_under_dir,
+    persist_engine_state,
+    persist_state,
+    serialize_chunks,
+    summarize_adjustment_changes,
+    update_clean_preview,
+    update_estimated_duration,
 )
 
 
@@ -230,31 +247,7 @@ def engine_status_updates(engine_id: str):
     return status_md, install_btn, uninstall_btn, generate_btn
 
 
-def _serialize_chunks(chunks: list[ChunkInfo]) -> list[dict]:
-    return [dataclasses.asdict(chunk) for chunk in chunks]
-
-
-def _deserialize_chunks(chunks: list[dict]) -> list[ChunkInfo]:
-    rebuilt = []
-    for chunk in chunks:
-        segments = [SpeechSegment(**seg) for seg in chunk.get("segments", [])]
-        rebuilt.append(
-            ChunkInfo(
-                segments=segments,
-                sentence_count=chunk.get("sentence_count", 0),
-                char_count=chunk.get("char_count", 0),
-                word_count=chunk.get("word_count", 0),
-                comma_count=chunk.get("comma_count", 0),
-                estimated_duration=chunk.get("estimated_duration", 0.0),
-                reason=chunk.get("reason"),
-                boundary_kind=chunk.get("boundary_kind"),
-                pivot=chunk.get("pivot", False),
-                ends_with_suspended=chunk.get("ends_with_suspended", False),
-                oversize_sentence=chunk.get("oversize_sentence", False),
-                warnings=chunk.get("warnings", []),
-            )
-        )
-    return rebuilt
+# _serialize_chunks / _deserialize_chunks moved to ui_gradio.gradio_helpers
 
 
 def mac_choose_folder(initial_dir: str | None = None) -> str | None:
@@ -298,13 +291,7 @@ def _get_job_state() -> dict:
         return dict(_JOB_STATE)
 
 
-def _cleanup_tmp(path: str | None) -> None:
-    if not path:
-        return
-    try:
-        Path(path).unlink(missing_ok=True)
-    except Exception:
-        LOGGER.exception("tmp_cleanup_failed path=%s", path)
+# _cleanup_tmp moved to ui_gradio.gradio_helpers (as cleanup_tmp)
 
 
 def _terminate_proc(proc: mp.Process | None, timeout: float = 0.8) -> None:
@@ -322,7 +309,7 @@ def _generate_longform_worker(payload: dict, result_queue: mp.Queue) -> None:
             payload["voice_ref_path"] = payload.pop("audio_prompt_path")
         if isinstance(payload.get("chunks"), list):
             if payload["chunks"] and isinstance(payload["chunks"][0], dict):
-                payload["chunks"] = _deserialize_chunks(payload["chunks"])
+                payload["chunks"] = deserialize_chunks(payload["chunks"])
         request = dict(payload)
         request["tts_backend"] = backend_id
         meta = generate_raw_wav(request).meta
@@ -339,10 +326,7 @@ def _generate_longform_worker(payload: dict, result_queue: mp.Queue) -> None:
         result_queue.put({"status": "error", "error": str(exc)})
 
 
-def ensure_output_dir(path: str | None) -> str:
-    target = Path(path).expanduser() if path else DEFAULT_OUTPUT_DIR
-    target.mkdir(parents=True, exist_ok=True)
-    return str(target)
+# ensure_output_dir moved to ui_gradio.gradio_helpers
 
 
 def clean_work_dir(work_root: Path) -> int:
@@ -379,12 +363,7 @@ def clean_work_dir(work_root: Path) -> int:
     return removed_sessions
 
 
-def _is_under_dir(candidate: Path, root: Path) -> bool:
-    try:
-        candidate.resolve().relative_to(root.resolve())
-    except ValueError:
-        return False
-    return True
+# _is_under_dir moved to ui_gradio.gradio_helpers (as is_under_dir)
 
 
 def _resolve_raw_take_path(session_dir: Path, session_data: dict) -> Path:
@@ -656,57 +635,15 @@ def handle_open_output_dir(out_dir: str | None, log_text: str | None):
     return append_ui_log(f"Dossier output ouvert: {output_dir}", log_text)
 
 
-def _coerce_float(value, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+# _coerce_float / _coerce_bool moved to ui_gradio.gradio_helpers
 
 
-def _coerce_bool(value, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    return default
+
+# persist_state / persist_engine_state moved to ui_gradio.gradio_helpers
 
 
-def persist_state(update: dict) -> None:
-    state = load_state()
-    state.update(update)
-    save_state(state)
 
-
-def persist_engine_state(engine_id: str, language: str | None = None, voice_id: str | None = None, params: dict | None = None) -> None:
-    state = load_state()
-    engines = state.get("engines")
-    if not isinstance(engines, dict):
-        engines = {}
-    engine_cfg = engines.get(engine_id)
-    if not isinstance(engine_cfg, dict):
-        engine_cfg = {}
-    if language is not None:
-        engine_cfg["language"] = language
-    if voice_id is not None:
-        engine_cfg["voice_id"] = voice_id
-    if params is not None:
-        engine_cfg["params"] = params
-    engines[engine_id] = engine_cfg
-    state["engines"] = engines
-    save_state(state)
-
-
-def append_log(message: str, previous: str | None) -> str:
-    stamp = dt.datetime.now().strftime("%H:%M:%S")
-    new_line = f"[{stamp}] {message}"
-    if previous:
-        return f"{previous}\n{new_line}"
-    return new_line
-
-
-def append_ui_log(message: str, previous: str | None, verbose: bool = False, enabled: bool = True) -> str:
-    if verbose and not enabled:
-        return previous or ""
-    return append_log(message, previous)
-
+# append_log / append_ui_log moved to ui_gradio.gradio_helpers
 
 def refresh_dropdown(current: str | None) -> gr.Dropdown:
     refs = list_refs()
@@ -742,71 +679,16 @@ def apply_adjusted(preview_text: str) -> str:
     return preview_text
 
 
-def update_clean_preview(text: str) -> str:
-    clean = render_clean_text(text)
-    return clean
+# update_clean_preview / update_estimated_duration moved to ui_gradio.gradio_helpers
 
 
 
 
-def _coerce_float(val, default=0.0):
-    try:
-        return float(val)
-    except (TypeError, ValueError):
-        return float(default)
+# duplicate _coerce_float / _coerce_int moved to ui_gradio.gradio_helpers
 
 
-def _coerce_int(val, default=0):
-    try:
-        return int(float(val))
-    except (TypeError, ValueError):
-        return int(default)
 
-
-def update_estimated_duration(text: str) -> str:
-    est = estimate_duration(text)
-    return f"Durée estimée: {est:.1f}s"
-
-
-def format_adjustment_log(changes: list[str], enabled: bool) -> str:
-    if not enabled:
-        return ""
-    if not changes:
-        return "Aucune correction."
-    ordered: list[str] = []
-    ordered.extend([c for c in changes if c.startswith("paste_norm_applied:")])
-    ordered.extend([c for c in changes if c.startswith("paste_norm_counts:")])
-    ordered.extend([c for c in changes if c.startswith("sigle_undot:")])
-    ordered.extend([c for c in changes if c.startswith("lexicon_hit:")])
-    ordered.extend([c for c in changes if c.startswith("sigle_auto:")])
-    lines = "\n".join(f"- {entry}" for entry in ordered)
-    return f"**Corrections appliquées**\n{lines}"
-
-
-def summarize_adjustment_changes(changes: list[str], log_text: str | None, verbose_logs: bool) -> str | None:
-    if not changes:
-        return log_text
-    paste_entry = next((c for c in changes if c.startswith("paste_norm_applied:")), None)
-    counts_entry = next((c for c in changes if c.startswith("paste_norm_counts:")), None)
-    if paste_entry:
-        log_text = append_ui_log(paste_entry.replace(": ", "="), log_text, verbose=True, enabled=verbose_logs)
-    if counts_entry:
-        log_text = append_ui_log(counts_entry.replace(": ", "="), log_text, verbose=True, enabled=verbose_logs)
-
-    def _collect(prefix: str) -> list[str]:
-        return [c[len(prefix) + 1 :].strip() for c in changes if c.startswith(f"{prefix}:")]
-
-    for prefix in ("sigle_undot", "lexicon_hit", "sigle_auto"):
-        items = _collect(prefix)
-        if items:
-            examples = "; ".join(items[:3])
-            log_text = append_ui_log(
-                f"{prefix}_count={len(items)} examples={examples}",
-                log_text,
-                verbose=True,
-                enabled=verbose_logs,
-            )
-    return log_text
+# format_adjustment_log / summarize_adjustment_changes moved to ui_gradio.gradio_helpers
 
 
 def handle_text_adjustment(
@@ -1599,7 +1481,7 @@ def handle_generate(
     job_state = _get_job_state()
     if job_state.get("job_running") and job_state.get("current_proc"):
         _terminate_proc(job_state.get("current_proc"))
-        _cleanup_tmp(job_state.get("current_tmp_path"))
+        cleanup_tmp(job_state.get("current_tmp_path"))
         _reset_job_state()
         log_text = append_ui_log("Job précédent interrompu.", log_text)
 
@@ -1607,7 +1489,7 @@ def handle_generate(
     payload = {
         "tts_backend": backend.id,
         "script": normalized_text,
-        "chunks": _serialize_chunks(chunks),
+        "chunks": serialize_chunks(chunks),
         "voice_ref_path": audio_prompt,
         "out_path": str(tmp_path),
         "lang": str(backend_language or tts_language or "fr-FR"),
@@ -1667,7 +1549,7 @@ def handle_generate(
             result = None
 
     if not result or result.get("status") != "ok":
-        _cleanup_tmp(str(tmp_path))
+        cleanup_tmp(str(tmp_path))
         _reset_job_state()
         if result and result.get("status") == "unavailable":
             log_text = append_ui_log(f"Backend indisponible: {result.get('error')}", log_text)
@@ -1818,7 +1700,7 @@ def handle_generate(
         session_state = {"dir": str(session_dir), "json": str(session_path)}
     except Exception as exc:
         log_text = append_ui_log(f"Session non écrite: {exc}", log_text)
-        _cleanup_tmp(str(tmp_path))
+        cleanup_tmp(str(tmp_path))
     _reset_job_state()
     persist_state(
         {
@@ -1852,7 +1734,7 @@ def handle_stop(log_text: str | None):
     proc = job_state.get("current_proc")
     if proc and proc.is_alive():
         _terminate_proc(proc)
-    _cleanup_tmp(job_state.get("current_tmp_path"))
+    cleanup_tmp(job_state.get("current_tmp_path"))
     _reset_job_state()
     if job_state.get("job_running"):
         log_text = append_ui_log("Annulé.", log_text)
@@ -2101,16 +1983,16 @@ def build_ui() -> gr.Blocks:
     )
     default_out_dir_value = str(DEFAULT_OUTPUT_DIR)
     default_user_filename = state_data.get("last_user_filename", "")
-    default_add_timestamp = _coerce_bool(state_data.get("last_add_timestamp"), True)
-    default_include_model_name = _coerce_bool(
+    default_add_timestamp = coerce_bool(state_data.get("last_add_timestamp"), True)
+    default_include_model_name = coerce_bool(
         state_data.get("last_include_model_name")
         if "last_include_model_name" in state_data
         else base_preset.get("include_model_name"),
         False,
     )
-    default_auto_adjust = _coerce_bool(state_data.get("last_auto_adjust"), True)
-    default_show_adjust_log = _coerce_bool(state_data.get("last_show_adjust_log"), False)
-    default_direction_enabled = _coerce_bool(
+    default_auto_adjust = coerce_bool(state_data.get("last_auto_adjust"), True)
+    default_show_adjust_log = coerce_bool(state_data.get("last_show_adjust_log"), False)
+    default_direction_enabled = coerce_bool(
         state_data.get("direction_enabled")
         if "direction_enabled" in state_data
         else base_preset.get("direction_enabled"),
@@ -2121,7 +2003,7 @@ def build_ui() -> gr.Blocks:
         if "direction_source" in state_data
         else base_preset.get("direction_source") or "final"
     )
-    default_verbose_logs = _coerce_bool(state_data.get("last_verbose_logs"), False)
+    default_verbose_logs = coerce_bool(state_data.get("last_verbose_logs"), False)
     default_inter_chunk_gap_ms = state_data.get("inter_chunk_gap_ms")
     if default_inter_chunk_gap_ms is None:
         default_inter_chunk_gap_ms = base_preset.get("inter_chunk_gap_ms", 120)
