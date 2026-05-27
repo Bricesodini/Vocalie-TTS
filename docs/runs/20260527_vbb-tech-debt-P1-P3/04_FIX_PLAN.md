@@ -197,7 +197,7 @@ The plan is explicit and complete. No execution has been performed. All three ru
 
 | Run | Priority | Target debt | Target files | Effort |
 |-----|----------|-------------|-------------|--------|
-| Run 01 | P1 | TD-002, TD-003 | 6 root modules → `backend/shared/`, path constants in `config.py` | L |
+| Run 01 | P1 | TD-002, TD-003 | 6 modules to `backend/shared/`, path constants in `config.py` | L | **DONE** c4c5b62 |
 | Run 02 | P2 | TD-005, TD-013 | New `tts_backends/catalog.py`, update 4 consumers | M |
 | Run 03 | P3 | TD-008 | 3 new test files | M |
 
