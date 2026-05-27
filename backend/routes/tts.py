@@ -22,63 +22,15 @@ from backend.services.job_service import JOB_STORE
 from backend.shared.refs import list_refs
 from tts_backends import get_backend, list_backends
 from backend.shared.text_tools import MANUAL_CHUNK_MARKER
+from tts_backends.catalog import ENGINE_CATALOG, canonical_engine_id, engine_meta
 
 
 router = APIRouter(prefix="/v1")
 LOGGER = logging.getLogger("chatterbox_api")
 
 
-ENGINE_CATALOG = [
-    {
-        "id": "chatterbox_native",
-        "label": "Chatterbox (native multilang)",
-        "backend_id": "chatterbox",
-        "supports_ref": True,
-    },
-    {
-        "id": "chatterbox_finetune_fr",
-        "label": "Chatterbox (FR fine-tune)",
-        "backend_id": "chatterbox",
-        "supports_ref": True,
-    },
-    {
-        "id": "xtts_v2",
-        "label": "XTTS v2 (voice cloning)",
-        "backend_id": "xtts",
-        "supports_ref": True,
-    },
-    {
-        "id": "piper",
-        "label": "Piper",
-        "backend_id": "piper",
-        "supports_ref": False,
-    },
-    {
-        "id": "bark",
-        "label": "Bark",
-        "backend_id": "bark",
-        "supports_ref": False,
-    },
-    {
-        "id": "qwen3_custom",
-        "label": "Qwen3 (CustomVoice/Design)",
-        "backend_id": "qwen3",
-        "supports_ref": False,
-    },
-    {
-        "id": "qwen3_clone",
-        "label": "Qwen3 (Voice clone)",
-        "backend_id": "qwen3",
-        "supports_ref": True,
-    },
-]
-
-
 def _engine_meta(engine_id: str) -> dict | None:
-    for entry in ENGINE_CATALOG:
-        if entry["id"] == engine_id:
-            return dict(entry)
-    return None
+    return engine_meta(engine_id)
 
 
 def _list_reference_voices() -> list[VoiceInfo]:

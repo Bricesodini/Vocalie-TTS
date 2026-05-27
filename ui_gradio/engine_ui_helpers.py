@@ -7,6 +7,7 @@ import gradio as gr
 from backend_install.status import backend_status
 from tts_backends import list_backends
 from tts_backends.base import coerce_language
+from tts_backends.catalog import ENGINE_ALIAS_MAP, canonical_engine_id
 
 
 LANGUAGE_LABELS = {
@@ -232,7 +233,7 @@ def load_engine_config(container: dict, engine_id: str) -> tuple[str, str | None
 def engine_status_markdown(engine_id: str) -> str:
     status = backend_status(engine_id)
     if status.get("installed"):
-        if engine_id == "xtts" and not status.get("model_downloaded", True):
+        if canonical_engine_id(engine_id) == "xtts_v2" and not status.get("model_downloaded", True):
             return "Statut moteur: ⚠️ Poids XTTS non préchargés (téléchargement au premier usage)"
         return f"Statut moteur: ✅ Installé ({status.get('reason')})"
     return f"Statut moteur: ❌ Non installé ({status.get('reason')})"
@@ -241,7 +242,7 @@ def engine_status_markdown(engine_id: str) -> str:
 def supported_languages_for(engine_id: str, backend, chatterbox_mode: str) -> list[str]:
     if backend is None:
         return ["fr-FR"]
-    if engine_id == "chatterbox":
+    if canonical_engine_id(engine_id) in ("chatterbox_native", "chatterbox_finetune_fr"):
         if chatterbox_mode == "fr_finetune":
             return ["fr-FR"]
         return backend.supported_languages() or ["fr-FR"]

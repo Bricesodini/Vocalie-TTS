@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from output_paths import sanitize_filename
+from tts_backends.catalog import canonical_engine_id
 
 BASE_DIR = Path(__file__).resolve().parent
 STATE_DIR = BASE_DIR / ".state"
@@ -38,7 +39,7 @@ def migrate_state(data: Dict) -> Dict:
     engines = data.get("engines")
     if not isinstance(engines, dict):
         engines = {}
-    engine_id = data.get("last_tts_engine") or "chatterbox"
+    engine_id = canonical_engine_id(data.get("last_tts_engine") or "chatterbox")
     engine_cfg = engines.get(engine_id)
     if not isinstance(engine_cfg, dict):
         engine_cfg = {}

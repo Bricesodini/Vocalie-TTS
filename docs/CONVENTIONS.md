@@ -86,9 +86,7 @@ Examples as plain text paths:
 ## Migration plan (mechanical)
 
 - Step 1 (DONE): Move shared root modules into `backend/shared/` and re-export via root shims; affected paths: `refs.py`, `text_tools.py`, `audio_defaults.py`, `output_paths.py`, `session_manager.py`, `tts_pipeline.py` now at `backend/shared/`, with shims at root. Path constants consolidated in `backend/config.py` only (TD-002, TD-003).
-- Step 2: Build canonical naming matrix for engines/presets and list all alias sites; affected paths: `backend/routes/tts.py`, `backend/services/preset_service.py`, `state_manager.py`, `app.py`.
-  - Risk note: alias removal too early can break old payloads.
-  - Rollback hint: preserve compatibility mapping table until consumers are migrated.
+- Step 2 (DONE): Engine alias map consolidated to single source of truth in `tts_backends/catalog.py`. `ENGINE_CATALOG` moved from `backend/routes/tts.py` to catalog. `ENGINE_ALIAS_MAP` and `canonical_engine_id()` added. All 4 consumers updated (`routes/tts.py`, `preset_service.py`, `state_manager.py`, `engine_ui_helpers.py`). Inline alias maps removed (TD-005, TD-013 partial).
 - Step 2: Mark root monolith files as compatibility-boundary in docs and PR checklist; affected paths: `README.md`, `docs/CONVENTIONS.md`.
   - Risk note: accidental new features may still land there.
   - Rollback hint: block via review gate before merge.

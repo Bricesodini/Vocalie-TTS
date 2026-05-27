@@ -9,6 +9,7 @@ from backend.config import PRESETS_DIR
 from backend.schemas.models import UIState
 from pydantic import ValidationError
 from backend.security import safe_filename
+from tts_backends.catalog import ENGINE_ALIAS_MAP, canonical_engine_id
 
 
 PRESET_SUFFIX = ".json"
@@ -39,11 +40,7 @@ def list_presets() -> List[Dict[str, Any]]:
 
 def _legacy_to_ui_state(data: Dict[str, Any], preset_id: str) -> Dict[str, Any]:
     legacy_engine = str(data.get("tts_engine") or data.get("engine_id") or data.get("engine") or "")
-    engine_map = {
-        "chatterbox": "chatterbox_finetune_fr",
-        "xtts": "xtts_v2",
-    }
-    engine_id = engine_map.get(legacy_engine, legacy_engine)
+    engine_id = canonical_engine_id(legacy_engine)
     engines = data.get("engines") if isinstance(data.get("engines"), dict) else {}
     engine_cfg = engines.get(legacy_engine) if isinstance(legacy_engine, str) else None
     if not isinstance(engine_cfg, dict):
