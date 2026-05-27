@@ -22,11 +22,11 @@
 
 Latest by family:
 - Scope freeze: `reports/scope-freeze-20260311-2211.md`
-- Audit readiness: `reports/audit-readiness-20260311-2211.md`
-- Code janitor: `reports/code-janitor-20260311-2214.md`
+- Audit readiness: `docs/audits/audit-readiness-20260527-1427.md`
+- Code janitor: `reports/code-janitor-20260527-1628.md`
 - Format/lint enforcement: `reports/format-lint-20260311-2215.md`
 - Doc context harmonization: `reports/doc-context-20260311-2216.md`
-- Tech debt audit: `docs/reports/TECH_DEBT_AUDIT_2026-03-11.md`
+- Tech debt audit: `docs/reports/TECH_DEBT_AUDIT_20260527.md`
 - Domain drift: `docs/reports/DOMAIN_MODEL_DRIFT_REPORT.md`
 
 ## Archive policy

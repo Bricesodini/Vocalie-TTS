@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import json
 import logging
 import multiprocessing as mp
 import os
@@ -17,7 +16,6 @@ import time
 import uuid
 from pathlib import Path
 from threading import Lock
-from typing import Optional
 
 import gradio as gr
 import numpy as np
@@ -28,7 +26,6 @@ from logging_utils import set_verbosity
 from output_paths import ensure_unique_path, get_engine_slug, make_output_filename
 from refs import (
     ALLOWED_EXTENSIONS,
-    DEFAULT_REF_DIR,
     import_refs,
     list_refs,
     resolve_ref_path,
@@ -40,7 +37,6 @@ from state_manager import (
     load_preset,
     load_state,
     save_preset,
-    save_state,
 )
 from text_tools import (
     DEFAULT_MAX_EST_SECONDS_PER_CHUNK,
@@ -65,7 +61,7 @@ from tts_backends.piper_assets import (
     piper_voice_supports_length_scale,
 )
 from tts_backends.xtts_backend import XTTS_ASSETS_DIR
-from tts_backends.base import BackendUnavailableError, coerce_language, pick_default_language
+from tts_backends.base import BackendUnavailableError, coerce_language
 from audio_defaults import SILENCE_MIN_MS, SILENCE_THRESHOLD
 from tts_pipeline import _find_active_range, generate_raw_wav
 from session_manager import (
@@ -105,17 +101,13 @@ from ui_gradio.gradio_helpers import (
     append_ui_log,
     cleanup_tmp,
     coerce_bool,
-    coerce_float,
-    coerce_int,
     deserialize_chunks,
     ensure_output_dir,
     format_adjustment_log,
-    is_under_dir,
     persist_engine_state,
     persist_state,
     serialize_chunks,
     summarize_adjustment_changes,
-    update_clean_preview,
     update_estimated_duration,
 )
 

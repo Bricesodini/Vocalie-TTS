@@ -193,10 +193,6 @@ def prepare_adjusted_text(user_text: str, lex_path: str | Path) -> Tuple[str, Li
     return text2, changes1 + changes2
 
 
-def count_words(text: str) -> int:
-    return len(re.findall(r"\w+", text))
-
-
 def estimate_duration(text: str, words_per_sec: float = AVERAGE_WPS) -> float:
     """Roughly estimate how long *text* will take to speak."""
 
