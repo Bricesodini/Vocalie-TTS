@@ -38,7 +38,7 @@ Ce document centralise les invariants fonctionnels et operationnels utilises com
 
 7. Frontieres de stockage locales stables
 - Regle: repertoire de travail et sorties derives de variables env ou defaults fixes, avec creation controlee.
-- Source: `backend/config.py` (`WORK_DIR`, `OUTPUT_DIR`, `PRESETS_DIR`).
+- Source: `backend/config.py` (`WORK_DIR`, `OUTPUT_DIR`, `PRESETS_DIR`) — unique source de verite; `app.py` et `ui_gradio/gradio_helpers.py` importent depuis `backend.config`.
 - Verification: `tests/test_output_naming.py`, smoke local.
 
 ## Notes de gouvernance

@@ -10,7 +10,7 @@ from backend.schemas.models import (
     PrepInterpretRequest,
     PrepInterpretResponse,
 )
-from text_tools import prepare_adjusted_text
+from backend.shared.text_tools import prepare_adjusted_text
 
 
 router = APIRouter(prefix="/v1")

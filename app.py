@@ -115,20 +115,15 @@ from ui_gradio.gradio_helpers import (
 logging.basicConfig(level=logging.INFO)
 LOGGER = logging.getLogger("chatterbox_app")
 
+from backend.config import OUTPUT_DIR, WORK_DIR
+
 BASE_DIR = Path(__file__).resolve().parent
 LEXIQUE_PATH = BASE_DIR / "lexique_tts_fr.json"
 
-
-work_env = os.environ.get("VOCALIE_WORK_DIR")
-WORK_DIR = Path(work_env).expanduser() if work_env else BASE_DIR / "work"
-WORK_DIR.mkdir(parents=True, exist_ok=True)
+DEFAULT_OUTPUT_DIR = OUTPUT_DIR
+DEFAULT_EDIT_TARGET_DBFS = -1.0
 TMP_DIR = WORK_DIR / ".tmp"
 TMP_DIR.mkdir(parents=True, exist_ok=True)
-
-output_env = os.environ.get("VOCALIE_OUTPUT_DIR") or os.environ.get("CHATTERBOX_OUT_DIR")
-DEFAULT_OUTPUT_DIR = Path(output_env).expanduser() if output_env else BASE_DIR / "output"
-DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-DEFAULT_EDIT_TARGET_DBFS = -1.0
 
 _LOAD_PRESET_OUTPUT_COUNT: int | None = None
 

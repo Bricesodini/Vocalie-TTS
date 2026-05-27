@@ -2,6 +2,7 @@
 
 | Assessment | Date | Verdict | Report |
 |------------|------|---------|--------|
+| td-002-td-003-remediation | 20260527 | DONE | `backend/shared/` created; path constants consolidated in `backend/config.py`; root shims preserve backward compat |
 | audit-readiness | 20260527 | READY | `docs/audits/audit-readiness-20260527-1427.md` |
 | audit-readiness | 20260312 | READY | `reports/audit-readiness-20260312-0635.md` |
 | audit-readiness | 20260311 | READY | `reports/audit-readiness-20260311-2211.md` |

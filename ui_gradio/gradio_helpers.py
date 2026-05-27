@@ -12,7 +12,6 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import logging
-import os
 from pathlib import Path
 
 from state_manager import load_state, save_state
@@ -29,16 +28,11 @@ LOGGER = logging.getLogger("chatterbox_app")
 # Path / directory constants (mirrors app.py module-level computation)
 # ---------------------------------------------------------------------------
 
+from backend.config import OUTPUT_DIR, WORK_DIR
+
 _BASE_DIR = Path(__file__).resolve().parent.parent  # repo root
 
-_work_env = os.environ.get("VOCALIE_WORK_DIR")
-WORK_DIR = Path(_work_env).expanduser() if _work_env else _BASE_DIR / "work"
-WORK_DIR.mkdir(parents=True, exist_ok=True)
-
-_output_env = os.environ.get("VOCALIE_OUTPUT_DIR") or os.environ.get("CHATTERBOX_OUT_DIR")
-DEFAULT_OUTPUT_DIR = Path(_output_env).expanduser() if _output_env else _BASE_DIR / "output"
-DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
+DEFAULT_OUTPUT_DIR = OUTPUT_DIR
 LEXIQUE_PATH = _BASE_DIR / "lexique_tts_fr.json"
 
 # ---------------------------------------------------------------------------

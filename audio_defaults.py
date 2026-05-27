@@ -1,4 +1,2 @@
-"""Shared audio defaults that do not depend on any backend."""
-
-SILENCE_THRESHOLD = 0.002
-SILENCE_MIN_MS = 20
+"""Compatibility shim — canonical location is backend.shared.audio_defaults."""
+from backend.shared.audio_defaults import SILENCE_MIN_MS, SILENCE_THRESHOLD  # noqa: F401

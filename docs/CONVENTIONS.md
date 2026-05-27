@@ -10,8 +10,9 @@
 
 ### 1) Project structure
 
-- `backend/` is the canonical API runtime surface (`routes`, `services`, `schemas`, `workers`).
-- Root monolith files (`app.py`, `state_manager.py`, `session_manager.py`, `tts_engine.py`, `tts_pipeline.py`) are compatibility/legacy surfaces and must not absorb new product scope.
+- `backend/` is the canonical API runtime surface (`routes`, `services`, `schemas`, `workers`, `shared`).
+- `backend/shared/` contains modules shared between canonical backend and compatibility surfaces (`refs`, `text_tools`, `audio_defaults`, `output_paths`, `session_manager`, `tts_pipeline`). Root-level re-export shims preserve backward compatibility.
+- Root monolith files (`app.py`, `state_manager.py`, `tts_engine.py`) are compatibility/legacy surfaces and must not absorb new product scope.
 - `frontend/src/` hosts production UI concerns only.
 - `scripts/` contains operational/developer automation; script behavior must reference canonical env policy.
 - `tests/` mirrors risk areas (API/security/rate-limit/state/backends) and remains colocated by domain responsibility.
@@ -21,6 +22,7 @@
 Examples as plain text paths:
 - `backend/routes/tts.py`
 - `backend/services/preset_service.py`
+- `backend/shared/text_tools.py`
 - `frontend/src/lib/api.ts`
 - `docs/invariants.md`
 - `reports/code-janitor-20260311-2214.md`
@@ -36,11 +38,13 @@ Examples as plain text paths:
 
 ### 3) Imports & boundaries
 
-- `backend/routes/*` may depend on `backend/services/*`, `backend/schemas/*`, and shared backend utilities.
+- `backend/routes/*` may depend on `backend/services/*`, `backend/schemas/*`, `backend/shared/*`, and shared backend utilities.
 - `backend/services/*` must not depend on route modules.
 - `backend/schemas/*` must remain domain contract definitions with no route-side effects.
+- `backend/shared/*` contains shared domain modules (text processing, path helpers, session management, TTS pipeline). Root-level shims re-export these for backward compatibility.
 - Frontend `lib/` is API/types/util boundary; page-level components should not duplicate request contract types.
 - No-crossing rule: new backend business logic should not be added into root `app.py`.
+- No-crossing rule: `backend/` modules must import from `backend.shared` rather than from root-level modules.
 
 ### 4) Configuration
 
@@ -75,13 +79,14 @@ Examples as plain text paths:
 - Are tests added/updated for changed risk areas?
 - Are debug logs absent or clearly justified and temporary?
 - Are files placed in the correct responsibility folder?
-- Are imports respecting route -> service -> schema layering?
+- Are imports respecting route -> service -> schema -> shared layering (no root-level imports in `backend/`)?
 - Is any duplicate helper logic introduced instead of reusing shared utilities?
 - Are CI checks still aligned with documented operational policy?
 
 ## Migration plan (mechanical)
 
-- Step 1: Build canonical naming matrix for engines/presets and list all alias sites; affected paths: `backend/routes/tts.py`, `backend/services/preset_service.py`, `state_manager.py`, `app.py`.
+- Step 1 (DONE): Move shared root modules into `backend/shared/` and re-export via root shims; affected paths: `refs.py`, `text_tools.py`, `audio_defaults.py`, `output_paths.py`, `session_manager.py`, `tts_pipeline.py` now at `backend/shared/`, with shims at root. Path constants consolidated in `backend/config.py` only (TD-002, TD-003).
+- Step 2: Build canonical naming matrix for engines/presets and list all alias sites; affected paths: `backend/routes/tts.py`, `backend/services/preset_service.py`, `state_manager.py`, `app.py`.
   - Risk note: alias removal too early can break old payloads.
   - Rollback hint: preserve compatibility mapping table until consumers are migrated.
 - Step 2: Mark root monolith files as compatibility-boundary in docs and PR checklist; affected paths: `README.md`, `docs/CONVENTIONS.md`.

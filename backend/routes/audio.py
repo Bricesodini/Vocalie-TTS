@@ -8,14 +8,14 @@ from pathlib import Path
 import subprocess
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
-from audio_defaults import SILENCE_MIN_MS, SILENCE_THRESHOLD
+from backend.shared.audio_defaults import SILENCE_MIN_MS, SILENCE_THRESHOLD
 import backend.config as backend_config
 from backend.schemas.models import AudioEditRequest, AudioEditResponse, AudioEnhanceResponse
 from backend.rate_limit import enforce_heavy
 from backend.services import asset_service
 from backend.services import audiosr_service
 from backend.services.tts_service import _apply_minimal_edit, _audio_meta
-from output_paths import ensure_unique_path
+from backend.shared.output_paths import ensure_unique_path
 
 
 router = APIRouter(prefix="/v1")

@@ -19,9 +19,9 @@ from backend.schemas.models import (
     VoiceInfo,
 )
 from backend.services.job_service import JOB_STORE
-from refs import list_refs
+from backend.shared.refs import list_refs
 from tts_backends import get_backend, list_backends
-from text_tools import MANUAL_CHUNK_MARKER
+from backend.shared.text_tools import MANUAL_CHUNK_MARKER
 
 
 router = APIRouter(prefix="/v1")

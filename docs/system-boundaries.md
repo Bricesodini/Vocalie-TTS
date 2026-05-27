@@ -34,6 +34,7 @@ Vue synthetique des frontieres de Chatterbox pour auditabilite.
 - `backend/routes/*`: surface API.
 - `backend/services/*`: logique metier et orchestration.
 - `backend/workers/*`: traitements asynchrones lourds.
+- `backend/shared/*`: modules partages entre backend canonique et surfaces de compatibilite (`refs`, `text_tools`, `audio_defaults`, `output_paths`, `session_manager`, `tts_pipeline`). Les shims de re-export au niveau racine preservent la compatibilite ascendante.
 - `frontend/`: client UI de production.
 
 ## Hors frontiere explicite (non-goals)

@@ -12,15 +12,15 @@ import numpy as np
 import soundfile as sf
 
 from backend.config import OUTPUT_DIR, WORK_DIR
-from output_paths import ensure_unique_path, get_engine_slug, make_output_filename
-from session_manager import (
+from backend.shared.output_paths import ensure_unique_path, get_engine_slug, make_output_filename
+from backend.shared.session_manager import (
     build_session_payload,
     build_session_slug,
     create_session_dir,
     get_take_path_global_raw,
 )
-from refs import resolve_ref_path
-from text_tools import (
+from backend.shared.refs import resolve_ref_path
+from backend.shared.text_tools import (
     ChunkInfo,
     MANUAL_CHUNK_MARKER,
     SpeechSegment,
@@ -32,9 +32,9 @@ from text_tools import (
 )
 from tts_backends import get_backend
 from tts_backends.base import BackendUnavailableError
-from audio_defaults import SILENCE_MIN_MS, SILENCE_THRESHOLD
+from backend.shared.audio_defaults import SILENCE_MIN_MS, SILENCE_THRESHOLD
 from backend.utils.time import utc_now
-from tts_pipeline import generate_raw_wav
+from backend.shared.tts_pipeline import generate_raw_wav
 
 
 def _single_chunk(text: str, *, reason: str) -> Optional[ChunkInfo]:

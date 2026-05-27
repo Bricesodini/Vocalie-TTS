@@ -5,6 +5,7 @@ Canonical source for runtime environment variables and their operational intent.
 ## Source of truth
 
 - Runtime defaults and parsing: `backend/config.py`
+- Path constants (`WORK_DIR`, `OUTPUT_DIR`, `PRESETS_DIR`): `backend/config.py` — the single source of truth; `app.py` and `ui_gradio/gradio_helpers.py` import from `backend.config`.
 - Example values for local setup: `.env.example`
 - Production validation procedure: `docs/security-runbook.md` + `scripts/check-security-baseline.sh`
 

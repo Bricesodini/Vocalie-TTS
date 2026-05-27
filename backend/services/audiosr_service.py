@@ -12,7 +12,7 @@ import soundfile as sf
 
 import backend.config as backend_config
 from backend.utils.time import utc_now
-from output_paths import ensure_unique_path, sanitize_filename
+from backend.shared.output_paths import ensure_unique_path, sanitize_filename
 
 
 LOGGER = logging.getLogger("chatterbox_api.audiosr")

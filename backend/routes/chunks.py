@@ -13,7 +13,7 @@ from backend.schemas.models import (
     ChunkSnapshotResponse,
     UIStateChunkPreview,
 )
-from text_tools import (
+from backend.shared.text_tools import (
     ChunkInfo,
     MANUAL_CHUNK_MARKER,
     SpeechSegment,
