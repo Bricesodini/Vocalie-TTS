@@ -144,24 +144,16 @@ def run_tts_job(
     editing: Dict[str, Any],
     progress_cb,
 ) -> Dict[str, Any]:
-    backend_id = engine
-    chatterbox_mode = None
-    if engine == "chatterbox_native":
-        backend_id = "chatterbox"
-        chatterbox_mode = "multilang"
-    elif engine == "chatterbox_finetune_fr":
-        backend_id = "chatterbox"
-        chatterbox_mode = "fr_finetune"
-    elif engine == "xtts_v2":
-        backend_id = "xtts"
-    elif engine == "qwen3_custom":
-        backend_id = "qwen3"
-    elif engine == "qwen3_clone":
-        backend_id = "qwen3"
+    backend = get_backend(engine)
+    if backend is None:
+        raise BackendUnavailableError(f"Backend introuvable: {engine}")
+    if not backend.is_available():
+        reason = backend.unavailable_reason() or "Dépendances manquantes."
+        raise BackendUnavailableError(f"Backend indisponible: {engine}. {reason}")
+
+    backend_id = backend.id
     if backend_id == "bark":
         direction_enabled = False
-
-    backend = get_backend(backend_id)
     if backend is None:
         raise BackendUnavailableError(f"Backend introuvable: {engine}")
     if not backend.is_available():
@@ -190,20 +182,7 @@ def run_tts_job(
     raw_path = get_take_path_global_raw(session_dir, "v1")
     tmp_path = session_dir / "takes" / "global" / f"tmp_{uuid.uuid4().hex}.wav"
 
-    engine_params = dict(options or {})
-    engine_params.pop("voice_ref_path", None)
-    engine_params.pop("audio_prompt_path", None)
-    engine_params.pop("inter_chunk_gap_ms", None)
-    if chatterbox_mode:
-        engine_params.setdefault("chatterbox_mode", chatterbox_mode)
-    if engine == "qwen3_custom":
-        requested_mode = engine_params.get("qwen3_mode")
-        if requested_mode in {"custom_voice", "voice_design"}:
-            engine_params["qwen3_mode"] = requested_mode
-        else:
-            engine_params["qwen3_mode"] = "custom_voice"
-    elif engine == "qwen3_clone":
-        engine_params["qwen3_mode"] = "voice_clone"
+    engine_params = backend.resolve_engine_params(engine, dict(options or {}))
 
     voice_ref_path = None
     if voice:
@@ -214,14 +193,14 @@ def run_tts_job(
         engine_params.setdefault("model_id", model)
 
     payload = {
-        "tts_backend": backend_id,
+        "tts_backend": backend.id,
         "script": normalized_text,
         "chunks": chunks,
         "voice_ref_path": voice_ref_path,
         "lang": language,
         "engine_params": engine_params,
         "target_sr": 24000,
-        "inter_chunk_gap_ms": int((options or {}).get("inter_chunk_gap_ms") or 0),
+        "inter_chunk_gap_ms": int((options or {}).get("inter_chunk_gap_ms") or 0) if backend.supports_inter_chunk_gap else 0,
         "out_path": str(tmp_path),
     }
 

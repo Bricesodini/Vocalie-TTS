@@ -36,7 +36,8 @@ def _pick_dtype(torch_mod, dtype_value: str | None):
     return getattr(torch_mod, name, None)
 
 
-def _coerce_bool(value, default: bool) -> bool:
+def coerce_bool(value, default: bool) -> bool:
+    """Coerce a value to bool. Mirrors tts_backends.base.coerce_bool."""
     if isinstance(value, bool):
         return value
     if value is None:
@@ -49,6 +50,62 @@ def _coerce_bool(value, default: bool) -> bool:
     if text in {"0", "false", "no", "n", "off"}:
         return False
     return default
+
+
+def _compute_audio_metrics(audio, sr: int) -> dict:
+    """Compute basic audio quality metrics for suspect-output detection.
+
+    Returns dict with duration_s, rms, peak, silence_ratio, clipped_ratio.
+    """
+    duration_s = float(len(audio) / sr) if sr else 0.0
+    float_audio = audio.astype(np.float64)
+    rms = float(np.sqrt(np.mean(float_audio ** 2))) if audio.size else 0.0
+    peak = float(np.max(np.abs(float_audio))) if audio.size else 0.0
+    threshold = 0.01
+    silence_ratio = float(np.mean(np.abs(float_audio) < threshold)) if audio.size else 1.0
+    clipped_ratio = float(np.mean(np.abs(float_audio) >= 0.99)) if audio.size else 0.0
+    return {
+        "duration_s": duration_s,
+        "rms": rms,
+        "peak": peak,
+        "silence_ratio": silence_ratio,
+        "clipped_ratio": clipped_ratio,
+    }
+
+
+def _looks_suspect_output(text: str, metrics: dict) -> bool:
+    """Return True if the synthesis output looks suspiciously bad.
+
+    Heuristics:
+    - Long text producing very short audio is suspicious (likely a crash/timeout).
+    - Very low RMS with mostly silence is suspicious (silent output).
+    """
+    duration = metrics.get("duration_s", 0)
+    rms = metrics.get("rms", 0)
+    silence = metrics.get("silence_ratio", 0)
+    # Long text with short output is suspicious
+    if len(text) > 80 and duration < 1.0:
+        return True
+    # Very low RMS with mostly silence is suspicious
+    if rms < 0.005 and silence > 0.7:
+        return True
+    return False
+
+
+def _candidate_score(text: str, metrics: dict) -> float:
+    """Score a candidate audio output for quality ranking.
+
+    Higher score = better candidate.  Used when retrying synthesis.
+    """
+    duration = metrics.get("duration_s", 0)
+    rms = metrics.get("rms", 0)
+    silence = metrics.get("silence_ratio", 0)
+    score = duration * 10  # prefer longer output
+    score += rms * 100  # prefer louder output
+    score -= silence * 5  # penalize silence
+    if len(text) > 80 and duration < 1.0:
+        score -= 50  # heavy penalty for suspiciously short output
+    return score
 
 
 def _log(message: str, *, log_path: str | None = None) -> None:
@@ -82,7 +139,7 @@ def main() -> int:
     speaker = payload.get("speaker")
     instruct = payload.get("instruct") or ""
     ref_text = payload.get("ref_text") or ""
-    x_vector_only_mode = _coerce_bool(payload.get("x_vector_only_mode"), True)
+    x_vector_only_mode = coerce_bool(payload.get("x_vector_only_mode"), True)
     voice_ref_path = payload.get("voice_ref_path")
     params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
     assets_dir = Path(payload.get("assets_dir") or "").expanduser()

@@ -18,7 +18,7 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { apiDelete, apiGet, apiPost, apiPostForm, apiPut, assetUrl, fetchVoices } from "@/lib/api";
+import { apiDelete, apiGet, apiPost, apiPostForm, apiPut, assetUrl, fetchModels, fetchVoices } from "@/lib/api";
 import {
   EMPTY_STATE,
   LANGUAGE_OPTIONS,
@@ -40,6 +40,7 @@ import type {
   EnginesResponse,
   JobCreateResponse,
   JobStatusResponse,
+  ModelInfo,
   PrepAdjustResponse,
   PrepInterpretResponse,
   PresetListItem,
@@ -240,25 +241,24 @@ export default function Home() {
   const canApplyEdit = Boolean(assetId && !isEditing);
   const exportTargetId = editedAssetId ?? assetId;
 
-  const isQwen3Custom = uiState.engine.engine_id === "qwen3_custom";
-  const isQwen3VoiceDesign = isQwen3Custom && uiState.engine.params?.qwen3_mode === "voice_design";
+  const [models, setModels] = useState<ModelInfo[]>([]);
+
+  const autoResolvedKeys: string[] = Array.isArray(engineSchema?.capabilities?.auto_resolved_keys)
+    ? (engineSchema.capabilities.auto_resolved_keys as string[])
+    : [];
+  const supportsVoiceDesign = Boolean(engineSchema?.capabilities?.supports_voice_design);
 
   const engineFieldList = useMemo(() => {
     const baseFields = engineFields(engineSchema?.fields ?? []);
     if (!uiState.engine.engine_id) {
       return baseFields;
     }
-    const special = ["chatterbox_native", "chatterbox_finetune_fr"];
     return baseFields.filter((field) => {
-      if (field.key === "chatterbox_mode" && special.includes(uiState.engine.engine_id)) {
-        return false;
-      }
-      if (isQwen3VoiceDesign && field.key === "instruct") {
-        return false;
-      }
+      if (autoResolvedKeys.includes(field.key)) return false;
+      if (supportsVoiceDesign && field.key === "instruct") return false;
       return true;
     });
-  }, [engineSchema, uiState.engine.engine_id, isQwen3VoiceDesign]);
+  }, [engineSchema, uiState.engine.engine_id, autoResolvedKeys, supportsVoiceDesign]);
   const postFieldList = postFields(engineSchema?.fields ?? []);
 
   function updateEngineParam(key: string, value: unknown) {
@@ -391,13 +391,13 @@ export default function Home() {
   }, [voiceDesignPresets]);
 
   useEffect(() => {
-    if (!isQwen3VoiceDesign) return;
+    if (!supportsVoiceDesign) return;
     const lang = uiState.engine.language || "";
     const accent = String(uiState.engine.params?.design_accent ?? "");
     if (lang.startsWith("fr") && (!accent || accent === "none")) {
       updateEngineParam("design_accent", "fr_neutral");
     }
-  }, [isQwen3VoiceDesign, uiState.engine.language]);
+  }, [supportsVoiceDesign, uiState.engine.language]);
 
   useEffect(() => {
     let active = true;
@@ -557,6 +557,24 @@ export default function Home() {
       active = false;
     };
   }, [uiState.engine.engine_id, supportsRef, uiState.engine.voice_id]);
+
+  useEffect(() => {
+    let active = true;
+    async function loadModels() {
+      if (!uiState.engine.engine_id) {
+        setModels([]);
+        return;
+      }
+      try {
+        const data = await fetchModels(uiState.engine.engine_id);
+        if (active) setModels(data.models);
+      } catch {
+        if (active) setModels([]);
+      }
+    }
+    loadModels();
+    return () => { active = false; };
+  }, [uiState.engine.engine_id]);
 
   async function refreshPresets() {
     const data = await apiGet<PresetListResponse>("/v1/presets");
@@ -1087,7 +1105,7 @@ export default function Home() {
                   </SelectContent>
                 </Select>
               </div>
-              {uiState.engine.engine_id === "qwen3_custom" && (
+              {Boolean(engineSchema?.capabilities?.can_refresh_speakers) && (
                 <div className="flex items-end gap-2">
                   <Button variant="outline" type="button" onClick={refreshEngineSchema}>
                     Mise a jour liste speakers
@@ -1143,6 +1161,22 @@ export default function Home() {
                 </Select>
               </div>
             </div>
+            {models.length > 1 && (
+              <div className="grid gap-2">
+                <label className="text-sm font-medium text-zinc-900">Modèle</label>
+                <Select
+                  value={String(uiState.engine.params?.model_id ?? "")}
+                  onValueChange={(v) => updateEngineParam("model_id", v)}
+                >
+                  <SelectTrigger><SelectValue placeholder="Par défaut" /></SelectTrigger>
+                  <SelectContent>
+                    {models.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>{m.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             {engineFieldList.length > 0 && (
               <DynamicFields
                 fields={engineFieldList}
@@ -1160,7 +1194,7 @@ export default function Home() {
                 }}
               />
             )}
-            {isQwen3VoiceDesign && (
+            {supportsVoiceDesign && (
               <div className="grid gap-3 rounded-md border border-zinc-200 px-3 py-3">
                 <div>
                   <p className="text-sm font-medium text-zinc-900">Presets VoiceDesign</p>

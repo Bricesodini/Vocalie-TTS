@@ -6,11 +6,18 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_MODELS = [
-    "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
-    "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
-    "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-]
+# Import the single source of truth for Qwen3 model IDs.
+# This module may run inside the qwen3 venv, so handle ImportError gracefully.
+try:
+    from tts_backends.qwen3_backend import QWEN3_DEFAULT_MODELS
+    DEFAULT_MODELS: list[str] = list(QWEN3_DEFAULT_MODELS.values())
+except ImportError:
+    # Fallback for venv execution where tts_backends is not importable.
+    DEFAULT_MODELS = [
+        "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+        "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+        "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+    ]
 
 
 def _parse_models(value: str | None) -> list[str]:

@@ -4,12 +4,17 @@ import numpy as np
 import soundfile as sf
 
 import app
+import backend.shared.tts_pipeline as tts_pipeline_mod
 import tts_pipeline
 from text_tools import ChunkInfo, SpeechSegment
 
 
 class DummyBackend:
     id = "dummy"
+    supports_inter_chunk_gap = True
+
+    def __init__(self, supports_gap=True):
+        self.supports_inter_chunk_gap = supports_gap
 
     def is_available(self):
         return True
@@ -46,9 +51,9 @@ def _make_chunks(count: int):
     return chunks
 
 
-def _run_pipeline(monkeypatch, tmp_path: Path, *, engine_id: str, chunks: int, gap_ms: int):
-    backend = DummyBackend()
-    monkeypatch.setattr(tts_pipeline, "get_backend", lambda _backend_id: backend)
+def _run_pipeline(monkeypatch, tmp_path: Path, *, engine_id: str, chunks: int, gap_ms: int, supports_gap: bool = True):
+    backend = DummyBackend(supports_gap=supports_gap)
+    monkeypatch.setattr(tts_pipeline_mod, "get_backend", lambda _backend_id: backend)
     out_path = tmp_path / f"{engine_id}_out.wav"
     request = {
         "tts_backend": engine_id,
@@ -85,7 +90,7 @@ def test_inter_chunk_gap_applies_for_qwen3(monkeypatch, tmp_path):
 
 
 def test_inter_chunk_gap_forced_zero_non_chatterbox(monkeypatch, tmp_path):
-    audio, sr = _run_pipeline(monkeypatch, tmp_path, engine_id="xtts", chunks=3, gap_ms=200)
+    audio, sr = _run_pipeline(monkeypatch, tmp_path, engine_id="xtts", chunks=3, gap_ms=200, supports_gap=False)
     assert sr == 24000
     assert abs(len(audio) - (3 * sr)) < 10
 

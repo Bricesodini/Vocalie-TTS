@@ -9,6 +9,18 @@ export type EnginesResponse = {
   engines: EngineInfo[];
 };
 
+export type ModelInfo = {
+  id: string;
+  label: string;
+  version?: string | null;
+  meta?: Record<string, unknown> | null;
+};
+
+export type ModelsResponse = {
+  engine: string;
+  models: ModelInfo[];
+};
+
 export type AudioSRStatus = {
   enabled: boolean;
   available: boolean;

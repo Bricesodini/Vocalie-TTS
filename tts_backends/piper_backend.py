@@ -10,7 +10,7 @@ from pathlib import Path
 from backend_install.paths import python_path
 from backend_install.status import backend_status
 
-from .base import BackendUnavailableError, ParamSpec, TTSBackend, VoiceInfo
+from .base import BackendUnavailableError, ModelInfo, ParamSpec, TTSBackend, VoiceInfo
 from .piper_assets import DEFAULT_VOICE_ID, get_voice_info, list_installed_voices, list_piper_voices
 
 
@@ -19,6 +19,16 @@ class PiperBackend(TTSBackend):
     display_name = "Piper (fast offline)"
     supports_ref_audio = False
     uses_internal_voices = True
+
+    @classmethod
+    def engine_variants(cls) -> list[dict[str, str]]:
+        return [{"id": "piper", "label": "Piper"}]
+
+    def list_models(self) -> list[ModelInfo]:
+        models = []
+        for voice in self.list_voices():
+            models.append(ModelInfo(id=voice.id, label=voice.label))
+        return models
 
     def __init__(self) -> None:
         self._voice_ids = list_installed_voices()

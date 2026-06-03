@@ -24,16 +24,20 @@ LOGGER = logging.getLogger("chatterbox_runner")
 
 BASE_REPO = "ResembleAI/chatterbox"
 FR_REPO = "Thomcles/Chatterbox-TTS-French"
-LANGUAGE_MAP = {
-    "fr-FR": "fr",
-    "en-US": "en",
-    "en-GB": "en",
-    "es-ES": "es",
-    "de-DE": "de",
-    "it-IT": "it",
-    "pt-PT": "pt",
-    "nl-NL": "nl",
-}
+try:
+    from tts_backends.catalog import CHATTERBOX_LANGUAGE_MAP as LANGUAGE_MAP
+except ImportError:
+    # Fallback when running inside the chatterbox venv
+    LANGUAGE_MAP = {
+        "fr-FR": "fr",
+        "en-US": "en",
+        "en-GB": "en",
+        "es-ES": "es",
+        "de-DE": "de",
+        "it-IT": "it",
+        "pt-PT": "pt",
+        "nl-NL": "nl",
+    }
 
 
 def _ensure_repo_override() -> None:

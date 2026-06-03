@@ -22,8 +22,7 @@ from backend.services.job_service import JOB_STORE
 from backend.shared.refs import list_refs
 from tts_backends import get_backend, list_backends
 from backend.shared.text_tools import MANUAL_CHUNK_MARKER
-from tts_backends.catalog import ENGINE_CATALOG, canonical_engine_id, engine_meta
-
+from tts_backends.catalog import get_engine_catalog, canonical_engine_id, engine_meta
 
 router = APIRouter(prefix="/v1")
 LOGGER = logging.getLogger("chatterbox_api")
@@ -42,16 +41,22 @@ def _list_reference_voices() -> list[VoiceInfo]:
 
 @router.get("/tts/engines", response_model=EnginesResponse)
 def list_engines() -> EnginesResponse:
-    engines = []
+    """List available TTS engines and their availability status."""
+    catalog = get_engine_catalog()
     backend_availability = {backend.id: backend.is_available() for backend in list_backends()}
-    for entry in ENGINE_CATALOG:
+    engines = []
+    for entry in catalog:
+        eid = entry["id"]
         available = backend_availability.get(entry["backend_id"], False)
+        # Resolve supports_ref from the backend (single source of truth)
+        backend = get_backend(eid)
+        supports_ref = backend.supports_ref_for_engine(eid) if backend else False
         engines.append(
             EngineInfo(
-                id=entry["id"],
+                id=eid,
                 label=entry["label"],
                 available=available,
-                supports_ref=bool(entry["supports_ref"]),
+                supports_ref=supports_ref,
             )
         )
     return EnginesResponse(engines=engines)
@@ -73,13 +78,16 @@ def list_voices(request: Request, engine: str | None = Query(default=None)) -> V
     meta = _engine_meta(engine)
     if meta is None:
         raise HTTPException(status_code=404, detail="engine_not_found")
-    voices = _list_reference_voices() if meta["supports_ref"] else []
+    # Resolve supports_ref from the backend
+    backend = get_backend(engine)
+    supports_ref = backend.supports_ref_for_engine(engine) if backend else bool(meta.get("supports_ref", False))
+    voices = _list_reference_voices() if supports_ref else []
     return VoicesResponse(engine=engine, voices=voices)
 
 
 @router.get("/tts/engine_schema", response_model=EngineSchemaResponse)
 def get_engine_schema(engine: str = Query(...)) -> EngineSchemaResponse:
-    meta = _engine_meta(engine) or {"backend_id": engine, "supports_ref": False}
+    meta = _engine_meta(engine) or {"backend_id": engine}
     backend = get_backend(meta.get("backend_id") or engine)
     if backend is None:
         raise HTTPException(status_code=404, detail="engine_not_found")
@@ -101,7 +109,7 @@ def get_engine_schema(engine: str = Query(...)) -> EngineSchemaResponse:
                 serialize_scope=spec.serialize_scope,
             )
         )
-    if engine.startswith("chatterbox_") or engine.startswith("qwen3_"):
+    if getattr(backend, "supports_inter_chunk_gap", False):
         fields.append(
             EngineSchemaField(
                 key="chunk_gap_ms",
@@ -111,18 +119,19 @@ def get_engine_schema(engine: str = Query(...)) -> EngineSchemaResponse:
                 step=10,
                 default=0,
                 label="Blanc entre chunks (ms)",
-                help="Ajoute un silence entre les chunks (Chatterbox/Qwen3).",
+                help="Ajoute un silence entre les chunks.",
                 serialize_scope="post",
             )
         )
-    capabilities = dict(backend.capabilities())
-    capabilities["supports_ref"] = bool(meta.get("supports_ref") or backend.supports_ref_audio)
+    capabilities = dict(backend.capabilities(engine_id=engine))
+    supports_ref = backend.supports_ref_for_engine(engine)
+    capabilities["supports_ref"] = supports_ref
     constraints = {}
-    if capabilities.get("supports_ref"):
+    if supports_ref:
         constraints["required"] = ["voice_id"]
     return EngineSchemaResponse(
         engine_id=engine,
-        backend_id=meta.get("backend_id"),
+        backend_id=meta.get("backend_id") if meta else backend.id,
         capabilities=capabilities,
         fields=fields,
         constraints=constraints,
@@ -131,10 +140,14 @@ def get_engine_schema(engine: str = Query(...)) -> EngineSchemaResponse:
 
 @router.get("/tts/models", response_model=ModelsResponse)
 def list_models(engine: str = Query(...)) -> ModelsResponse:
+    """List available models for a given TTS engine."""
     backend = get_backend(engine)
     if backend is None:
         raise HTTPException(status_code=404, detail="engine_not_found")
-    models = []
+    models = [
+        ModelInfo(id=m.id, label=m.label, version=m.version, meta=m.meta)
+        for m in backend.list_models()
+    ]
     return ModelsResponse(engine=engine, models=models)
 
 
@@ -144,9 +157,17 @@ def create_job(http_request: Request, request: TTSJobRequest) -> JobCreateRespon
     engine_id = request.engine_id or request.engine
     if not engine_id:
         raise HTTPException(status_code=400, detail="engine_required")
+    engine_id = canonical_engine_id(engine_id)
     meta = _engine_meta(engine_id)
     if meta is None:
         raise HTTPException(status_code=404, detail="engine_not_found")
+
+    # Resolve supports_ref from backend
+    backend = get_backend(engine_id)
+    if backend is None:
+        raise HTTPException(status_code=404, detail="engine_not_found")
+    supports_ref = backend.supports_ref_for_engine(engine_id)
+
     export = {
         "format": "wav",
         "filename": None,
@@ -158,7 +179,7 @@ def create_job(http_request: Request, request: TTSJobRequest) -> JobCreateRespon
     if export.get("format") != "wav":
         raise HTTPException(status_code=400, detail="only_wav_supported")
     voice = request.voice_id or request.voice or None
-    if meta["supports_ref"]:
+    if supports_ref:
         refs = list_refs()
         if voice is None or str(voice).strip() == "":
             if refs:
@@ -178,21 +199,15 @@ def create_job(http_request: Request, request: TTSJobRequest) -> JobCreateRespon
     gap_ms = post_params.get("chunk_gap_ms")
     if gap_ms is None:
         gap_ms = post_params.get("chatterbox_gap_ms")
-    if gap_ms is not None and (engine_id.startswith("chatterbox_") or engine_id.startswith("qwen3_")):
+
+    # Resolve engine-specific params via the backend (no if/elif)
+    options = backend.resolve_engine_params(engine_id, options)
+
+    # Inter-chunk gap: only if the backend supports it
+    if backend.supports_inter_chunk_gap and gap_ms is not None:
         options["inter_chunk_gap_ms"] = int(gap_ms)
-    if request.engine == "chatterbox_native" or engine_id == "chatterbox_native":
-        options.setdefault("chatterbox_mode", "multilang")
-    elif request.engine == "chatterbox_finetune_fr" or engine_id == "chatterbox_finetune_fr":
-        options.setdefault("chatterbox_mode", "fr_finetune")
-    elif request.engine == "qwen3_custom" or engine_id == "qwen3_custom":
-        requested_mode = options.get("qwen3_mode")
-        if requested_mode in {"custom_voice", "voice_design"}:
-            options["qwen3_mode"] = requested_mode
-        else:
-            options["qwen3_mode"] = "custom_voice"
-    elif request.engine == "qwen3_clone" or engine_id == "qwen3_clone":
-        options["qwen3_mode"] = "voice_clone"
-    if request.voice_id and not meta["supports_ref"]:
+
+    if request.voice_id and not supports_ref:
         options.setdefault("voice_id", request.voice_id)
 
     text = request.text

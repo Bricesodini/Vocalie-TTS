@@ -14,7 +14,7 @@ from backend.config import VOCALIE_BARK_SMALL_MODELS, VOCALIE_BARK_TIMEOUT_S
 from backend_install.paths import python_path
 from backend_install.status import backend_status
 
-from .base import BackendUnavailableError, ParamSpec, TTSBackend
+from .base import BackendUnavailableError, ModelInfo, ParamSpec, TTSBackend
 
 
 def _probe_bark_presets(timeout_s: float = 2.0) -> list[str]:
@@ -76,6 +76,15 @@ class BarkBackend(TTSBackend):
     display_name = "Bark (creative)"
     supports_ref_audio = False
     uses_internal_voices = True
+
+    @classmethod
+    def engine_variants(cls) -> list[dict[str, str]]:
+        return [{"id": "bark", "label": "Bark"}]
+
+    def list_models(self) -> list[ModelInfo]:
+        return [
+            ModelInfo(id="suno/bark", label="Bark (base)", meta={"mode": "bark"}),
+        ]
 
     @classmethod
     def is_available(cls) -> bool:

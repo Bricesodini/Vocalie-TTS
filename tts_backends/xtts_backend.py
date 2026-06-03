@@ -16,7 +16,7 @@ import soundfile as sf
 from backend_install.paths import python_path
 from backend_install.status import backend_status
 
-from .base import BackendUnavailableError, ParamSpec, TTSBackend
+from .base import BackendUnavailableError, ModelInfo, ParamSpec, TTSBackend
 
 XTTS_DEFAULT_MODEL = "tts_models/multilingual/multi-dataset/xtts_v2"
 XTTS_ASSETS_DIR = Path(__file__).resolve().parents[1] / ".assets" / "xtts"
@@ -85,6 +85,18 @@ class XTTSBackend(TTSBackend):
     display_name = "XTTS v2 (voice cloning)"
     supports_ref_audio = True
     uses_internal_voices = False
+
+    @classmethod
+    def engine_variants(cls) -> list[dict[str, str]]:
+        return [{"id": "xtts_v2", "label": "XTTS v2 (voice cloning)"}]
+
+    def list_models(self) -> list[ModelInfo]:
+        return [
+            ModelInfo(
+                id=XTTS_DEFAULT_MODEL, label="XTTS v2 (Coqui)",
+                meta={"mode": "xtts_v2"},
+            ),
+        ]
 
     @classmethod
     def is_available(cls) -> bool:

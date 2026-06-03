@@ -14,19 +14,9 @@ import soundfile as sf
 from backend_install.paths import ROOT, python_path
 from backend_install.status import backend_status
 
-from .base import BackendUnavailableError, ParamSpec, TTSBackend
+from .base import BackendUnavailableError, ModelInfo, ParamSpec, TTSBackend
+from .catalog import CHATTERBOX_LANGUAGE_MAP
 
-
-LANGUAGE_MAP = {
-    "fr-FR": "fr",
-    "en-US": "en",
-    "en-GB": "en",
-    "es-ES": "es",
-    "de-DE": "de",
-    "it-IT": "it",
-    "pt-PT": "pt",
-    "nl-NL": "nl",
-}
 
 
 def _runner_path() -> Path:
@@ -83,6 +73,19 @@ class ChatterboxBackend(TTSBackend):
     display_name = "Chatterbox (stable long-form)"
     supports_ref_audio = True
     uses_internal_voices = False
+    supports_inter_chunk_gap = True
+
+    _ENGINE_MODE_MAP = {
+        "chatterbox_native": "multilang",
+        "chatterbox_finetune_fr": "fr_finetune",
+    }
+
+    @classmethod
+    def engine_variants(cls) -> list[dict[str, str]]:
+        return [
+            {"id": "chatterbox_native", "label": "Chatterbox (native multilang)"},
+            {"id": "chatterbox_finetune_fr", "label": "Chatterbox (FR fine-tune)"},
+        ]
 
     @classmethod
     def is_available(cls) -> bool:
@@ -93,7 +96,7 @@ class ChatterboxBackend(TTSBackend):
         return backend_status("chatterbox").get("reason")
 
     def supported_languages(self) -> list[str]:
-        return list(LANGUAGE_MAP.keys())
+        return list(CHATTERBOX_LANGUAGE_MAP.keys())
 
     def default_language(self) -> str:
         return "fr-FR"
@@ -160,10 +163,39 @@ class ChatterboxBackend(TTSBackend):
             ),
         }
 
+    def list_models(self) -> list[ModelInfo]:
+        return [
+            ModelInfo(
+                id="ResembleAI/chatterbox", label="Chatterbox (base)",
+                meta={"mode": "multilang"},
+            ),
+            ModelInfo(
+                id="Thomcles/Chatterbox-TTS-French", label="Chatterbox FR fine-tune",
+                meta={"mode": "fr_finetune"},
+            ),
+        ]
+
+    def auto_resolved_keys(self, engine_id: str | None = None) -> list[str]:
+        """chatterbox_mode is resolved from engine_id by resolve_engine_params."""
+        return ["chatterbox_mode"]
+
+    def capabilities(self, engine_id: str | None = None) -> Dict[str, bool | list]:
+        caps = super().capabilities(engine_id)
+        return caps
+
+    def resolve_engine_params(self, engine_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        mode = self._ENGINE_MODE_MAP.get(engine_id)
+        if mode:
+            params.setdefault("chatterbox_mode", mode)
+        return params
+
+    def supports_ref_for_engine(self, engine_id: str) -> bool:
+        return True
+
     def map_language(self, bcp47: Optional[str]) -> Optional[str]:
         if not bcp47:
             return "fr"
-        return LANGUAGE_MAP.get(bcp47, bcp47.split("-")[0])
+        return CHATTERBOX_LANGUAGE_MAP.get(bcp47, bcp47.split("-")[0])
 
     def synthesize(
         self,

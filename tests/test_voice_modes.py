@@ -5,14 +5,13 @@ from tts_backends import get_backend
 def test_backend_capabilities_voice_modes():
     chatterbox = get_backend("chatterbox")
     piper = get_backend("piper")
-    assert chatterbox.capabilities() == {
-        "uses_voice_reference": True,
-        "uses_internal_voices": False,
-    }
-    assert piper.capabilities() == {
-        "uses_voice_reference": False,
-        "uses_internal_voices": True,
-    }
+    chatterbox_caps = chatterbox.capabilities()
+    assert chatterbox_caps["uses_voice_reference"] is True
+    assert chatterbox_caps["uses_internal_voices"] is False
+    assert "auto_resolved_keys" in chatterbox_caps
+    piper_caps = piper.capabilities()
+    assert piper_caps["uses_voice_reference"] is False
+    assert piper_caps["uses_internal_voices"] is True
 
 
 def test_piper_uses_internal_voices():

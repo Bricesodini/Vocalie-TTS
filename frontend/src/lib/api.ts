@@ -1,4 +1,4 @@
-import type { VoicesResponse } from "@/lib/types";
+import type { ModelsResponse, VoicesResponse } from "@/lib/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
 
@@ -102,6 +102,13 @@ export async function fetchVoices(engineId: string): Promise<VoicesResponse> {
     return { engine: "", voices: [] };
   }
   return apiGet("/v1/tts/voices", { engine: engineId });
+}
+
+export async function fetchModels(engineId: string): Promise<ModelsResponse> {
+  if (!engineId) {
+    return { engine: "", models: [] };
+  }
+  return apiGet("/v1/tts/models", { engine: engineId });
 }
 
 export function assetUrl(assetId: string): string {

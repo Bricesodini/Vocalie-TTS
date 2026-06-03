@@ -15,7 +15,8 @@ import soundfile as sf
 from backend_install.paths import ROOT, python_path
 from backend_install.status import backend_status
 
-from .base import BackendUnavailableError, ParamSpec, TTSBackend
+from .base import BackendUnavailableError, ModelInfo, ParamSpec, TTSBackend, coerce_bool
+from .catalog import QWEN3_LANGUAGE_MAP
 
 
 QWEN3_ASSETS_DIR = Path(__file__).resolve().parents[1] / ".assets" / "qwen3"
@@ -23,21 +24,6 @@ QWEN3_DEFAULT_MODELS = {
     "custom_voice": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
     "voice_design": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
     "voice_clone": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
-}
-LANGUAGE_MAP = {
-    "zh-CN": "Chinese",
-    "zh-TW": "Chinese",
-    "en-US": "English",
-    "en-GB": "English",
-    "ja-JP": "Japanese",
-    "ko-KR": "Korean",
-    "de-DE": "German",
-    "fr-FR": "French",
-    "ru-RU": "Russian",
-    "pt-PT": "Portuguese",
-    "pt-BR": "Portuguese",
-    "es-ES": "Spanish",
-    "it-IT": "Italian",
 }
 
 SPEAKER_CHOICES = [
@@ -102,6 +88,11 @@ def _run_qwen3_runner(payload: dict, timeout_s: float = 300.0) -> dict:
 
 
 def _ensure_wav_ref(path: str, tmp_dir: Path) -> str:
+    """Convert any audio file to a normalized WAV suitable for voice cloning.
+
+    Applies ffmpeg normalisation: mono, 24 kHz, s16 sample format,
+    loudnorm filter (with fallback if loudnorm is unavailable).
+    """
     ref_path = Path(path)
     if ref_path.suffix.lower() == ".wav":
         return str(ref_path)
@@ -109,32 +100,45 @@ def _ensure_wav_ref(path: str, tmp_dir: Path) -> str:
     if not ffmpeg:
         raise BackendUnavailableError("Qwen3 voice clone requiert un WAV (ffmpeg introuvable).")
     out_path = tmp_dir / f"qwen3_ref_{ref_path.stem}.wav"
+    # Try with loudnorm filter first for consistent loudness
     cmd = [
-        ffmpeg,
-        "-y",
-        "-i",
-        str(ref_path),
-        "-ac",
-        "1",
+        ffmpeg, "-y", "-i", str(ref_path),
+        "-ac", "1", "-ar", "24000", "-sample_fmt", "s16",
+        "-af", "loudnorm",
         str(out_path),
     ]
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        # Fallback without audio filter (loudnorm may not be available)
+        cmd_simple = [
+            ffmpeg, "-y", "-i", str(ref_path),
+            "-ac", "1", "-ar", "24000", "-sample_fmt", "s16",
+            str(out_path),
+        ]
+        subprocess.run(cmd_simple, check=True, capture_output=True, text=True)
     return str(out_path)
 
 
-def _coerce_bool(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return default
-    if isinstance(value, (int, float)):
-        return bool(value)
-    text = str(value).strip().lower()
-    if text in {"1", "true", "yes", "y", "on"}:
-        return True
-    if text in {"0", "false", "no", "n", "off"}:
-        return False
-    return default
+def _validate_ref_audio(path: str) -> dict:
+    """Validate that a reference audio file is suitable for voice cloning.
+
+    Checks duration (>= 1s) and RMS level (not silence).
+    Returns a metrics dict on success, raises BackendUnavailableError on failure.
+    """
+    info = sf.info(path)
+    sr = int(info.samplerate)
+    audio, _ = sf.read(path, dtype="float32")
+    duration_s = float(len(audio) / sr)
+    if duration_s < 1.0:
+        raise BackendUnavailableError(
+            f"Audio de reference trop court ({duration_s:.1f}s < 1.0s)."
+        )
+    rms = float(np.sqrt(np.mean(audio.astype(np.float64) ** 2)))
+    if rms < 0.001:
+        raise BackendUnavailableError(
+            f"Audio de reference trop silencieux (RMS={rms:.4f})."
+        )
+    return {"duration_s": duration_s, "rms": rms, "sample_rate": sr}
 
 
 class Qwen3Backend(TTSBackend):
@@ -142,6 +146,19 @@ class Qwen3Backend(TTSBackend):
     display_name = "Qwen3 TTS"
     supports_ref_audio = False
     uses_internal_voices = False
+    supports_inter_chunk_gap = True
+
+    _ENGINE_MODE_MAP = {
+        "qwen3_custom": "custom_voice",
+        "qwen3_clone": "voice_clone",
+    }
+
+    @classmethod
+    def engine_variants(cls) -> list[dict[str, str]]:
+        return [
+            {"id": "qwen3_custom", "label": "Qwen3 (CustomVoice/Design)"},
+            {"id": "qwen3_clone", "label": "Qwen3 (Voice clone)"},
+        ]
 
     @classmethod
     def is_available(cls) -> bool:
@@ -152,10 +169,43 @@ class Qwen3Backend(TTSBackend):
         return backend_status("qwen3").get("reason")
 
     def supported_languages(self) -> list[str]:
-        return list(LANGUAGE_MAP.keys())
+        return list(QWEN3_LANGUAGE_MAP.keys())
 
     def default_language(self) -> str:
         return "fr-FR"
+
+    def list_models(self) -> list[ModelInfo]:
+        return [
+            ModelInfo(
+                id=v, label=f"Qwen3-TTS {mode.replace('_', ' ').title()}",
+                meta={"mode": mode},
+            )
+            for mode, v in QWEN3_DEFAULT_MODELS.items()
+        ]
+
+    def supports_ref_for_engine(self, engine_id: str) -> bool:
+        """qwen3_clone requires a reference voice; others do not."""
+        return engine_id == "qwen3_clone"
+
+    def auto_resolved_keys(self, engine_id: str | None = None) -> list[str]:
+        """qwen3_mode is resolved from engine_id by resolve_engine_params."""
+        return ["qwen3_mode"]
+
+    def capabilities(self, engine_id: str | None = None) -> Dict[str, bool | list]:
+        caps = super().capabilities(engine_id)
+        caps["can_refresh_speakers"] = True
+        caps["supports_voice_design"] = engine_id == "qwen3_custom"
+        return caps
+
+    def resolve_engine_params(self, engine_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        default_mode = self._ENGINE_MODE_MAP.get(engine_id)
+        if default_mode:
+            requested = params.get("qwen3_mode")
+            if requested in {"custom_voice", "voice_design", "voice_clone"}:
+                params["qwen3_mode"] = requested
+            else:
+                params["qwen3_mode"] = default_mode
+        return params
 
     def params_schema(self) -> dict[str, ParamSpec]:
         return {
@@ -228,7 +278,7 @@ class Qwen3Backend(TTSBackend):
     def map_language(self, bcp47: Optional[str]) -> Optional[str]:
         if not bcp47:
             return "French"
-        return LANGUAGE_MAP.get(bcp47, "Auto")
+        return QWEN3_LANGUAGE_MAP.get(bcp47, "Auto")
 
     def synthesize(
         self,
@@ -274,6 +324,7 @@ class Qwen3Backend(TTSBackend):
         ref_audio_path = None
         if mode == "voice_clone" and voice_ref_path:
             ref_audio_path = _ensure_wav_ref(voice_ref_path, tmp_dir)
+            _validate_ref_audio(ref_audio_path)
 
         model_id = params.get("model_id") or QWEN3_DEFAULT_MODELS.get(mode)
         speaker = params.get("voice") or params.get("voice_id") or params.get("speaker")
@@ -294,7 +345,7 @@ class Qwen3Backend(TTSBackend):
             "speaker": speaker,
             "instruct": instruct,
             "ref_text": params.get("ref_text") or "",
-            "x_vector_only_mode": _coerce_bool(params.get("x_vector_only_mode"), True),
+            "x_vector_only_mode": coerce_bool(params.get("x_vector_only_mode"), True),
             "voice_ref_path": ref_audio_path or voice_ref_path,
             "assets_dir": str(QWEN3_ASSETS_DIR),
             "debug_log_path": str(debug_log_path),
