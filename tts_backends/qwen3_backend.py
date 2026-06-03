@@ -1,21 +1,19 @@
-"""Qwen3 TTS backend wrapper (optional dependency)."""
+"""Qwen3 TTS backend wrapper (subprocess runner via SubprocessBackendMixin)."""
 
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
-import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import numpy as np
 import soundfile as sf
 
-from backend_install.paths import ROOT, python_path
 from backend_install.status import backend_status
 
 from .base import BackendUnavailableError, ModelInfo, ParamSpec, TTSBackend, coerce_bool
+from .base_runner import SubprocessBackendMixin
 from .catalog import QWEN3_LANGUAGE_MAP
 
 
@@ -37,54 +35,6 @@ SPEAKER_CHOICES = [
     ("Ono_Anna (F, Japanese)", "Ono_Anna"),
     ("Sohee (F, Korean)", "Sohee"),
 ]
-
-def _runner_path() -> Path:
-    return Path(__file__).resolve().parent / "qwen3_runner.py"
-
-
-def _run_qwen3_runner(payload: dict, timeout_s: float = 300.0) -> dict:
-    py = python_path("qwen3")
-    if not py.exists():
-        raise BackendUnavailableError("Qwen3 venv introuvable.")
-    runner = _runner_path()
-    if not runner.exists():
-        raise BackendUnavailableError("Runner Qwen3 introuvable.")
-    try:
-        result = subprocess.run(
-            [str(py), str(runner)],
-            input=json.dumps(payload),
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise BackendUnavailableError("Qwen3 runner timeout.") from exc
-
-    stdout = (result.stdout or "").strip()
-    stderr = (result.stderr or "").strip()
-    if result.returncode != 0:
-        raise BackendUnavailableError(stderr or stdout or "Qwen3 runner failed.")
-    if not stdout:
-        raise BackendUnavailableError("Qwen3 runner returned no output.")
-    try:
-        data = json.loads(stdout)
-    except json.JSONDecodeError:
-        lines = [line for line in stdout.splitlines() if line.strip()]
-        if not lines:
-            raise BackendUnavailableError("Qwen3 runner returned invalid JSON.")
-        try:
-            data = json.loads(lines[-1])
-        except json.JSONDecodeError as exc:
-            raise BackendUnavailableError("Qwen3 runner returned invalid JSON.") from exc
-    if not data.get("ok"):
-        error = data.get("error") or "Qwen3 runner failed."
-        detail = data.get("detail")
-        if detail:
-            error = f"{error}\n{detail}"
-        raise BackendUnavailableError(error)
-    if stderr:
-        data["stderr"] = stderr
-    return data
 
 
 def _ensure_wav_ref(path: str, tmp_dir: Path) -> str:
@@ -141,7 +91,11 @@ def _validate_ref_audio(path: str) -> dict:
     return {"duration_s": duration_s, "rms": rms, "sample_rate": sr}
 
 
-class Qwen3Backend(TTSBackend):
+class Qwen3Backend(TTSBackend, SubprocessBackendMixin):
+    runner_module = "qwen3_runner"
+    runner_venv = "qwen3"
+    default_timeout = 300.0
+
     id = "qwen3"
     display_name = "Qwen3 TTS"
     supports_ref_audio = False
@@ -184,11 +138,9 @@ class Qwen3Backend(TTSBackend):
         ]
 
     def supports_ref_for_engine(self, engine_id: str) -> bool:
-        """qwen3_clone requires a reference voice; others do not."""
         return engine_id == "qwen3_clone"
 
     def auto_resolved_keys(self, engine_id: str | None = None) -> list[str]:
-        """qwen3_mode is resolved from engine_id by resolve_engine_params."""
         return ["qwen3_mode"]
 
     def capabilities(self, engine_id: str | None = None) -> Dict[str, bool | list]:
@@ -298,10 +250,6 @@ class Qwen3Backend(TTSBackend):
         lang: Optional[str] = None,
         **params: Any,
     ):
-        py = python_path("qwen3")
-        if not py.exists():
-            raise BackendUnavailableError("Qwen3 venv introuvable.")
-
         mode = str(params.get("qwen3_mode") or "custom_voice")
         if mode not in {"custom_voice", "voice_design", "voice_clone"}:
             mode = "custom_voice"
@@ -314,13 +262,7 @@ class Qwen3Backend(TTSBackend):
         QWEN3_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
         tmp_dir = QWEN3_ASSETS_DIR / ".tmp"
         tmp_dir.mkdir(parents=True, exist_ok=True)
-        run_id = uuid.uuid4().hex
-        tmp_wav = tmp_dir / f"qwen3_{run_id}.wav"
-        debug_log_path = tmp_dir / "qwen3_last.log"
-        try:
-            debug_log_path.write_text("", encoding="utf-8")
-        except OSError:
-            pass
+
         ref_audio_path = None
         if mode == "voice_clone" and voice_ref_path:
             ref_audio_path = _ensure_wav_ref(voice_ref_path, tmp_dir)
@@ -336,9 +278,7 @@ class Qwen3Backend(TTSBackend):
             if str(emotion) != "neutral":
                 instruct = str(emotion)
 
-        payload = {
-            "text": text,
-            "out_path": str(tmp_wav),
+        payload_suffix = {
             "mode": mode,
             "model_id": model_id,
             "language": self.map_language(lang),
@@ -346,36 +286,32 @@ class Qwen3Backend(TTSBackend):
             "instruct": instruct,
             "ref_text": params.get("ref_text") or "",
             "x_vector_only_mode": coerce_bool(params.get("x_vector_only_mode"), True),
-            "voice_ref_path": ref_audio_path or voice_ref_path,
             "assets_dir": str(QWEN3_ASSETS_DIR),
-            "debug_log_path": str(debug_log_path),
             "params": {
                 "device": params.get("device"),
                 "dtype": params.get("dtype"),
                 "attn_implementation": params.get("attn_implementation"),
             },
         }
+        if ref_audio_path:
+            payload_suffix["voice_ref_path"] = ref_audio_path
+        elif voice_ref_path:
+            payload_suffix["voice_ref_path"] = voice_ref_path
+
         timeout_s = 900.0 if mode == "voice_clone" else 300.0
-        result = _run_qwen3_runner(payload, timeout_s=timeout_s)
-        if not tmp_wav.exists():
-            raise BackendUnavailableError("Qwen3 runner n'a pas produit de WAV.")
-        audio, sr = sf.read(str(tmp_wav), dtype="float32")
-        try:
-            tmp_wav.unlink(missing_ok=True)
-        except OSError:
-            pass
-        meta = {
-            "backend_id": self.id,
-            "backend_lang": lang,
-            "qwen3_mode": mode,
-            "qwen3_model": model_id,
-            "qwen3_speaker": speaker,
-        }
-        if debug_log_path.exists():
-            meta["debug_log_path"] = str(debug_log_path)
-        if result.get("stderr"):
-            meta["stderr"] = result.get("stderr")
-        return np.asarray(audio, dtype=np.float32), int(sr), meta
+        audio, sr, meta = self._run_subprocess_chunk(
+            text,
+            voice_ref_path=None,  # Already in payload_suffix
+            lang=lang,
+            payload_suffix=payload_suffix,
+            timeout_s=timeout_s,
+        )
+        meta["backend_id"] = self.id
+        meta["backend_lang"] = lang
+        meta["qwen3_mode"] = mode
+        meta["qwen3_model"] = model_id
+        meta["qwen3_speaker"] = speaker
+        return audio, sr, meta
 
 
 __all__ = ["Qwen3Backend"]

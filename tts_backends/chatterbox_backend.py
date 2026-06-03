@@ -1,74 +1,23 @@
-"""Chatterbox TTS backend wrapper (subprocess runner)."""
+"""Chatterbox TTS backend wrapper (subprocess runner via SubprocessBackendMixin)."""
 
 from __future__ import annotations
 
 import json
-import subprocess
-import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import numpy as np
-import soundfile as sf
-
-from backend_install.paths import ROOT, python_path
 from backend_install.status import backend_status
 
 from .base import BackendUnavailableError, ModelInfo, ParamSpec, TTSBackend
+from .base_runner import SubprocessBackendMixin
 from .catalog import CHATTERBOX_LANGUAGE_MAP
 
 
+class ChatterboxBackend(TTSBackend, SubprocessBackendMixin):
+    runner_module = "chatterbox_runner"
+    runner_venv = "chatterbox"
+    default_timeout = 180.0
 
-def _runner_path() -> Path:
-    return Path(__file__).resolve().parent / "chatterbox_runner.py"
-
-
-def _run_chatterbox_runner(payload: dict, timeout_s: float = 180.0) -> dict:
-    py = python_path("chatterbox")
-    if not py.exists():
-        raise BackendUnavailableError("Chatterbox venv introuvable.")
-    runner = _runner_path()
-    if not runner.exists():
-        raise BackendUnavailableError("Runner Chatterbox introuvable.")
-    try:
-        result = subprocess.run(
-            [str(py), str(runner)],
-            input=json.dumps(payload),
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise BackendUnavailableError("Chatterbox runner timeout.") from exc
-
-    stdout = (result.stdout or "").strip()
-    stderr = (result.stderr or "").strip()
-    if result.returncode != 0:
-        raise BackendUnavailableError(stderr or stdout or "Chatterbox runner failed.")
-    if not stdout:
-        raise BackendUnavailableError("Chatterbox runner returned no output.")
-    try:
-        data = json.loads(stdout)
-    except json.JSONDecodeError:
-        lines = [line for line in stdout.splitlines() if line.strip()]
-        if not lines:
-            raise BackendUnavailableError("Chatterbox runner returned invalid JSON.")
-        try:
-            data = json.loads(lines[-1])
-        except json.JSONDecodeError as exc:
-            raise BackendUnavailableError("Chatterbox runner returned invalid JSON.") from exc
-    if not data.get("ok"):
-        error = data.get("error") or "Chatterbox runner failed."
-        trace = data.get("trace")
-        if trace:
-            error = f"{error}\n{trace}"
-        raise BackendUnavailableError(error)
-    if stderr:
-        data["stderr"] = stderr
-    return data
-
-
-class ChatterboxBackend(TTSBackend):
     id = "chatterbox"
     display_name = "Chatterbox (stable long-form)"
     supports_ref_audio = True
@@ -176,12 +125,10 @@ class ChatterboxBackend(TTSBackend):
         ]
 
     def auto_resolved_keys(self, engine_id: str | None = None) -> list[str]:
-        """chatterbox_mode is resolved from engine_id by resolve_engine_params."""
         return ["chatterbox_mode"]
 
     def capabilities(self, engine_id: str | None = None) -> Dict[str, bool | list]:
-        caps = super().capabilities(engine_id)
-        return caps
+        return super().capabilities(engine_id)
 
     def resolve_engine_params(self, engine_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
         mode = self._ENGINE_MODE_MAP.get(engine_id)
@@ -212,7 +159,7 @@ class ChatterboxBackend(TTSBackend):
             lang=lang,
             params=params,
         )
-        result = _run_chatterbox_runner(payload)
+        result = self._run_subprocess(payload)
         meta = {
             "backend_id": self.id,
             "backend_lang": lang,
@@ -220,11 +167,10 @@ class ChatterboxBackend(TTSBackend):
             "duration_s": result.get("duration_s"),
             "retry": bool(result.get("retry")),
         }
-        logs = result.get("logs")
-        if logs:
-            meta["runner_logs"] = logs
+        if result.get("logs"):
+            meta["runner_logs"] = result["logs"]
         if result.get("stderr"):
-            meta["stderr"] = result.get("stderr")
+            meta["stderr"] = result["stderr"]
         return meta
 
     def synthesize_chunk(
@@ -235,34 +181,15 @@ class ChatterboxBackend(TTSBackend):
         lang: Optional[str] = None,
         **params: Any,
     ):
-        tmp_dir = ROOT / ".assets" / "chatterbox" / ".tmp"
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-        tmp_wav = tmp_dir / f"chatterbox_{uuid.uuid4().hex}.wav"
-        payload = _build_runner_payload(
-            text=text,
-            out_wav_path=str(tmp_wav),
+        payload_suffix = _build_runner_suffix(
             voice_ref_path=voice_ref_path,
             lang=lang,
             params=params,
         )
-        result = _run_chatterbox_runner(payload)
-        if not tmp_wav.exists():
-            raise BackendUnavailableError("Chatterbox runner n'a pas produit de WAV.")
-        audio, sr = sf.read(str(tmp_wav), dtype="float32")
-        try:
-            tmp_wav.unlink(missing_ok=True)
-        except OSError:
-            pass
-        meta = {
-            "retry": bool(result.get("retry")),
-            "duration_s": result.get("duration_s"),
-        }
-        logs = result.get("logs")
-        if logs:
-            meta["runner_logs"] = logs
-        if result.get("stderr"):
-            meta["stderr"] = result.get("stderr")
-        return np.asarray(audio, dtype=np.float32), int(sr), meta
+        audio, sr, meta = self._run_subprocess_chunk(
+            text, payload_suffix=payload_suffix,
+        )
+        return audio, sr, meta
 
 
 def _build_runner_payload(
@@ -288,3 +215,19 @@ def _build_runner_payload(
     if voice_ref_path:
         payload["ref_audio_path"] = voice_ref_path
     return payload
+
+
+def _build_runner_suffix(
+    *,
+    voice_ref_path: Optional[str],
+    lang: Optional[str],
+    params: dict[str, Any],
+) -> dict:
+    """Build the extra keys for a chunk-level subprocess payload."""
+    return _build_runner_payload(
+        text="",  # placeholder — _run_subprocess_chunk sets text
+        out_wav_path="",  # placeholder — _run_subprocess_chunk sets out_path
+        voice_ref_path=voice_ref_path,
+        lang=lang,
+        params=params,
+    )

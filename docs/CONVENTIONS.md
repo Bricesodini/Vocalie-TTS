@@ -32,7 +32,7 @@ Examples as plain text paths:
 - Python files/functions/modules: `snake_case`.
 - TypeScript components: `kebab-case` files under `components/ui/` with exported PascalCase symbols allowed.
 - API paths remain versioned under `/v1/*`.
-- Canonical engine IDs must be stable and explicit (`chatterbox_native`, `chatterbox_finetune_fr`, `xtts_v2`, `piper`, `bark`, `qwen3_custom`, `qwen3_clone`).
+- Canonical engine IDs must be stable and explicit (`chatterbox_native`, `chatterbox_finetune_fr`, `xtts_v2`, `piper`, `bark`, `qwen3_custom`, `qwen3_clone`). New engine IDs are declared via `engine_variants()` on the backend class, not hardcoded in routes or frontend.
 - Legacy aliases (`chatterbox`, `xtts`) are compatibility-only and must stay at migration boundaries.
 - Tests: `tests/test_<domain>.py` naming required.
 
@@ -72,7 +72,7 @@ Examples as plain text paths:
 
 - Does the change keep business logic out of `app.py` unless compatibility-only?
 - Are new APIs under `/v1/*` and consistent with existing route conventions?
-- Are engine IDs using canonical names (not introducing new ad-hoc aliases)?
+- Are engine IDs using canonical names (not introducing new ad-hoc aliases)? Are they declared via `engine_variants()` on the backend class?
 - Are legacy compatibility mappings localized rather than spread?
 - Is configuration sourced from `backend/config.py` with documented env keys?
 - Are docs updated when scope/invariants/boundaries change?
