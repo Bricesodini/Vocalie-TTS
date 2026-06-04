@@ -23,6 +23,24 @@
         }
       }
     },
+    "/v1/metrics": {
+      "get": {
+        "summary": "Metrics",
+        "operationId": "metrics_v1_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/info": {
       "get": {
         "summary": "Info",
@@ -62,6 +80,7 @@
     "/v1/tts/engines": {
       "get": {
         "summary": "List Engines",
+        "description": "List available TTS engines and their availability status.",
         "operationId": "list_engines_v1_tts_engines_get",
         "responses": {
           "200": {
@@ -165,6 +184,7 @@
     "/v1/tts/models": {
       "get": {
         "summary": "List Models",
+        "description": "List available models for a given TTS engine.",
         "operationId": "list_models_v1_tts_models_get",
         "parameters": [
           {
@@ -1658,6 +1678,30 @@
             "type": "string",
             "format": "date-time",
             "title": "Timestamp"
+          },
+          "work_dir_writable": {
+            "type": "boolean",
+            "title": "Work Dir Writable",
+            "default": true
+          },
+          "output_dir_writable": {
+            "type": "boolean",
+            "title": "Output Dir Writable",
+            "default": true
+          },
+          "backends": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "boolean"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backends"
           }
         },
         "type": "object",
@@ -1833,6 +1877,57 @@
           "created_at"
         ],
         "title": "JobStatusResponse"
+      },
+      "MetricsResponse": {
+        "properties": {
+          "uptime_s": {
+            "type": "integer",
+            "title": "Uptime S"
+          },
+          "jobs_total": {
+            "type": "integer",
+            "title": "Jobs Total",
+            "default": 0
+          },
+          "jobs_completed": {
+            "type": "integer",
+            "title": "Jobs Completed",
+            "default": 0
+          },
+          "jobs_failed": {
+            "type": "integer",
+            "title": "Jobs Failed",
+            "default": 0
+          },
+          "jobs_pending": {
+            "type": "integer",
+            "title": "Jobs Pending",
+            "default": 0
+          },
+          "backends_available": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object",
+            "title": "Backends Available"
+          },
+          "work_dir_writable": {
+            "type": "boolean",
+            "title": "Work Dir Writable",
+            "default": true
+          },
+          "output_dir_writable": {
+            "type": "boolean",
+            "title": "Output Dir Writable",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "uptime_s"
+        ],
+        "title": "MetricsResponse",
+        "description": "Simple runtime metrics for observability."
       },
       "ModelInfo": {
         "properties": {

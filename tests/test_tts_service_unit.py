@@ -9,7 +9,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from backend.services.tts_service import _build_chunks, _apply_minimal_edit, _audio_meta
+from backend.shared.audio_edit import apply_minimal_edit, audio_meta
+from backend.services.tts_service import _build_chunks
 
 
 # --- _build_chunks ---
@@ -33,12 +34,12 @@ class TestBuildChunks:
         assert len(chunks) == 2
 
 
-# --- _apply_minimal_edit ---
+# --- apply_minimal_edit ---
 
 
 class TestApplyMinimalEdit:
     def test_trim_silence(self, tmp_path: Path):
-        """Test that _apply_minimal_edit trims silence from a WAV file."""
+        """Test that apply_minimal_edit trims silence from a WAV file."""
         sr = 22050
         silence = np.zeros(sr, dtype=np.float32)
         tone = np.ones(sr // 2, dtype=np.float32) * 0.5
@@ -48,7 +49,7 @@ class TestApplyMinimalEdit:
         input_path = tmp_path / "input.wav"
         sf.write(str(input_path), audio, sr)
         output_path = tmp_path / "output.wav"
-        result = _apply_minimal_edit(
+        result = apply_minimal_edit(
             input_path,
             output_path,
             trim_enabled=True,
@@ -68,7 +69,7 @@ class TestApplyMinimalEdit:
         input_path = tmp_path / "input.wav"
         sf.write(str(input_path), audio, sr)
         output_path = tmp_path / "output.wav"
-        result = _apply_minimal_edit(
+        result = apply_minimal_edit(
             input_path,
             output_path,
             trim_enabled=False,
@@ -88,7 +89,7 @@ class TestApplyMinimalEdit:
         input_path = tmp_path / "input.wav"
         sf.write(str(input_path), audio, sr)
         output_path = tmp_path / "output.wav"
-        result = _apply_minimal_edit(
+        result = apply_minimal_edit(
             input_path,
             output_path,
             trim_enabled=False,
@@ -109,7 +110,7 @@ class TestApplyMinimalEdit:
         sf.write(str(input_path), audio, sr)
         output_path = tmp_path / "output.wav"
         # Should not crash on silent audio
-        _apply_minimal_edit(
+        apply_minimal_edit(
             input_path,
             output_path,
             trim_enabled=True,
@@ -120,7 +121,7 @@ class TestApplyMinimalEdit:
         )
 
 
-# --- _audio_meta ---
+# --- audio_meta ---
 
 
 class TestAudioMeta:
@@ -131,7 +132,7 @@ class TestAudioMeta:
 
         path = tmp_path / "test.wav"
         sf.write(str(path), audio, sr)
-        meta = _audio_meta(path)
+        meta = audio_meta(path)
         assert "duration_s" in meta
         assert meta["duration_s"] > 0
         assert "sample_rate" in meta
@@ -144,5 +145,5 @@ class TestAudioMeta:
 
         path = tmp_path / "short.wav"
         sf.write(str(path), audio, sr)
-        meta = _audio_meta(path)
+        meta = audio_meta(path)
         assert meta["duration_s"] < 1.0

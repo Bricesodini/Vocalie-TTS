@@ -14,7 +14,7 @@ from backend.schemas.models import AudioEditRequest, AudioEditResponse, AudioEnh
 from backend.rate_limit import enforce_heavy
 from backend.services import asset_service
 from backend.services import audiosr_service
-from backend.services.tts_service import _apply_minimal_edit, _audio_meta
+from backend.shared.audio_edit import apply_minimal_edit, audio_meta
 from backend.shared.output_paths import ensure_unique_path
 
 
@@ -99,8 +99,8 @@ def edit_audio(http_request: Request, request: AudioEditRequest) -> AudioEditRes
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = ensure_unique_path(output_dir, f"{input_path.stem}_edit{input_path.suffix}")
 
-    before_meta = _audio_meta(input_path)
-    meta = _apply_minimal_edit(
+    before_meta = audio_meta(input_path)
+    meta = apply_minimal_edit(
         input_path,
         output_path,
         trim_enabled=bool(request.trim_enabled),
@@ -109,7 +109,7 @@ def edit_audio(http_request: Request, request: AudioEditRequest) -> AudioEditRes
         silence_threshold=float(SILENCE_THRESHOLD),
         silence_min_ms=int(SILENCE_MIN_MS),
     )
-    after_meta = _audio_meta(output_path)
+    after_meta = audio_meta(output_path)
     trim_s = max(0.0, float(before_meta.get("duration_s", 0.0)) - float(after_meta.get("duration_s", 0.0)))
 
     metrics = {

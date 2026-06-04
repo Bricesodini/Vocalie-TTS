@@ -242,10 +242,9 @@ def engine_status_markdown(engine_id: str) -> str:
 def supported_languages_for(engine_id: str, backend, chatterbox_mode: str) -> list[str]:
     if backend is None:
         return ["fr-FR"]
-    if canonical_engine_id(engine_id) in ("chatterbox_native", "chatterbox_finetune_fr"):
-        if chatterbox_mode == "fr_finetune":
-            return ["fr-FR"]
-        return backend.supported_languages() or ["fr-FR"]
+    # Chatterbox FR fine-tune only supports fr-FR
+    if getattr(backend, 'id', '') == 'chatterbox' and chatterbox_mode == "fr_finetune":
+        return ["fr-FR"]
     return backend.supported_languages() or ["fr-FR"]
 
 

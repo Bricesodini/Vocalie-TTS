@@ -11,6 +11,21 @@ class HealthResponse(BaseModel):
     api_version: str
     uptime_s: int
     timestamp: datetime
+    work_dir_writable: bool = True
+    output_dir_writable: bool = True
+    backends: Optional[Dict[str, bool]] = None
+
+
+class MetricsResponse(BaseModel):
+    """Simple runtime metrics for observability."""
+    uptime_s: int
+    jobs_total: int = 0
+    jobs_completed: int = 0
+    jobs_failed: int = 0
+    jobs_pending: int = 0
+    backends_available: Dict[str, bool] = Field(default_factory=dict)
+    work_dir_writable: bool = True
+    output_dir_writable: bool = True
 
 
 class InfoResponse(BaseModel):
