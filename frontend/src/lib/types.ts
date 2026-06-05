@@ -199,3 +199,21 @@ export type AssetMetaResponse = {
   created_at?: string | null;
   job_id?: string | null;
 };
+
+export type GlossaryEntry = {
+  word: string;
+  pronunciation: string;
+};
+
+export type GlossaryListResponse = {
+  entries: GlossaryEntry[];
+};
+
+export type RefDirConfig = {
+  directory: string;
+};
+
+export type RefListResponse = {
+  directory: string;
+  files: string[];
+};

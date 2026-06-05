@@ -32,8 +32,6 @@ def _parse_bool_env(name: str, default: bool = False) -> bool:
 DEFAULT_CORS_ORIGINS = [
     "http://localhost:3018",
     "http://127.0.0.1:3018",
-    "http://localhost:7860",
-    "http://127.0.0.1:7860",
 ]
 
 VOCALIE_CORS_ORIGINS = _parse_csv_env("VOCALIE_CORS_ORIGINS", DEFAULT_CORS_ORIGINS)

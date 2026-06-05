@@ -4,6 +4,7 @@ import app
 from text_tools import normalize_paste_fr, prepare_adjusted_text
 
 
+
 LEX_PATH = Path(__file__).resolve().parents[1] / "lexique_tts_fr.json"
 
 

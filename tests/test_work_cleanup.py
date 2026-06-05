@@ -5,6 +5,7 @@ import pytest
 import app
 
 
+
 def test_clean_work_dir_removes_sessions(monkeypatch, tmp_path: Path):
     repo_root = tmp_path / "repo"
     work_root = repo_root / "work"

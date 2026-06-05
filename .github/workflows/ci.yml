@@ -89,7 +89,7 @@ jobs:
       - name: Rate-limit fairness simulation
         run: python scripts/check-rate-limit-fairness.py
       - name: Python lint (minimal, blocking)
-        run: ruff check backend app.py state_manager.py session_manager.py tts_engine.py tts_pipeline.py scripts tests
+        run: ruff check backend scripts tests tts_pipeline.py text_tools.py audio_defaults.py output_paths.py refs.py session_manager.py
 
   frontend:
     runs-on: ubuntu-latest

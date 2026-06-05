@@ -1,45 +1,54 @@
 # Project Context
 
-## Purpose & scope
+## What this repo is
 
-Chatterbox provides a local-first TTS production stack (API + frontend) focused on deterministic text-to-audio generation, optional reference voice usage, and optional audio enhancement.
+Local-first TTS production stack with:
+- FastAPI backend (`backend/`) — canonical runtime
+- Next.js production frontend (`frontend/src/`)
+- Optional debug cockpit (`ui_gradio/cockpit.py`) — not required for normal operation
 
-Current product scope and non-goals are defined in `README.md` under:
-- `Perimetre d'audit (gele)`
-- `Out-of-scope / Non-goals`
-- `Cas d'usage critiques`
+## Current scope + non-goals
 
-## Non-goals (current)
+Canonical scope/non-goals are in `README.md` (`Perimetre d'audit (gele)`, `Out-of-scope / Non-goals`, `Cas d'usage critiques`).
 
-- Public Internet exposure of the API without hardening/proxy controls.
-- Gradio as production UI.
-- Implicit text rewriting or implicit post-processing.
+Key non-goals:
+- Public Internet exposure of the API without hardening/proxy controls
+- Implicit text rewriting or implicit post-processing
+
+## Critical invariants
+
+See `docs/invariants.md`.
+Key invariants include auth on protected routes, input/output bounds, rate-limit behavior, and explicit production security baseline.
 
 ## Architecture snapshot
 
-- Canonical backend runtime: `backend/` (`routes`, `services`, `schemas`, `workers`).
-- Production UI: `frontend/src/` (Next.js).
-- Compatibility/legacy surfaces still present at root (`app.py`, state/session legacy helpers).
+- Canonical backend: `backend/` (`routes`, `services`, `schemas`, `workers`)
+- TTS backends: `tts_backends/` (auto-registered via `__init_subclass__`)
+- Production UI: `frontend/src/` (Next.js)
+- Shared modules: `backend/shared/` (canonical location, re-exported via root shims)
+- Debug cockpit: `ui_gradio/` (optional, not a production surface)
 
-## Key workflows / commands
+## Commands
 
-- Setup/run: see `README.md`.
-- Security baseline check: `bash ./scripts/check-security-baseline.sh --prod`
-- Rate-limit fairness check: `python ./scripts/check-rate-limit-fairness.py`
-- API smoke checks: `bash ./scripts/smoke.sh`
+- Tests: `pytest -q`
+- Frontend lint/build: `cd frontend && npm run lint && npm run build`
+- Security baseline: `bash ./scripts/check-security-baseline.sh --prod`
+- Smoke: `bash ./scripts/smoke.sh`
 - CI baseline: `.github/workflows/ci.yml`
 
-## Data & security highlights
+## Conventions pointer
 
-- Invariants: `docs/invariants.md`
-- System boundaries: `docs/system-boundaries.md`
-- Security operations: `docs/security-runbook.md`
-- Env governance: `docs/ENV_POLICY.md`
+- `docs/CONVENTIONS.md`
 
-## Canonical links
+## Top risks + mitigations
+
+- Legacy/canonical drift for presets and engine IDs → glossary + decisions + boundary-only alias policy
+- Config drift → centralized env policy (`docs/ENV_POLICY.md`) + CI guardrails
+
+## Where truth lives
 
 - `docs/INDEX.md`
 - `docs/CONVENTIONS.md`
 - `docs/DECISIONS.md`
 - `docs/GLOSSARY.md`
-- `docs/CONTEXT.compact.md`
+- `docs/architecture.md`

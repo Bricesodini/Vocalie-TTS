@@ -12,7 +12,6 @@ usage() {
 Usage:
   ./scripts/bootstrap.sh min [--force]
   ./scripts/bootstrap.sh std [--force]
-  ./scripts/bootstrap.sh bark [--force]
   ./scripts/bootstrap.sh clean
 EOF
 }
@@ -112,16 +111,8 @@ install_audiosr() {
 install_std_engines() {
   # shellcheck disable=SC1091
   source "$CORE_VENV/bin/activate"
-  python -c "from backend_install.installer import run_install; print(run_install('xtts'))"
-  python -c "from backend_install.installer import run_install; print(run_install('piper'))"
   python -c "from backend_install.installer import run_install; print(run_install('qwen3'))"
-  deactivate || true
-}
-
-install_bark() {
-  # shellcheck disable=SC1091
-  source "$CORE_VENV/bin/activate"
-  python -c "from backend_install.installer import run_install; ok, logs = run_install('bark'); print('\\n'.join(logs)); raise SystemExit(0 if ok else 1)"
+  python -c "from backend_install.installer import run_install; print(run_install('cosyvoice'))"
   deactivate || true
 }
 
@@ -155,14 +146,6 @@ case "$MODE" in
     install_core
     install_chatterbox
     install_std_engines
-    install_bark
-    install_audiosr
-    run_smoke
-    ;;
-  bark)
-    require_python
-    install_core
-    install_bark
     install_audiosr
     run_smoke
     ;;

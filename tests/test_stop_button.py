@@ -4,6 +4,7 @@ import time
 import app
 
 
+
 def test_handle_stop_terminates_process_and_cleans_tmp(tmp_path):
     ctx = mp.get_context("spawn")
     proc = ctx.Process(target=time.sleep, args=(5,))

@@ -1,0 +1,63 @@
+# Vocalie-TTS — docker-compose.yml
+# Usage:  docker compose up -d
+# Ports:  3018 (frontend), 8018 (backend API, optional)
+
+services:
+  vocalie:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Leave empty to use the Next.js proxy (recommended).
+        # Set to "http://127.0.0.1:8018" only for remote backend deployments.
+        NEXT_PUBLIC_API_BASE: ""
+    container_name: vocalie-tts
+    ports:
+      - "3018:3018"   # Frontend (Next.js)
+      # Uncomment to also expose the backend API directly:
+      # - "8018:8018"
+    environment:
+      # --- Security ---
+      # Set a strong API key for production. Leave empty for localhost-only trust.
+      VOCALIE_API_KEY: ""
+      VOCALIE_TRUST_LOCALHOST: "1"
+      VOCALIE_ENABLE_API_DOCS: "0"
+      VOCALIE_EXPOSE_SYSTEM_INFO: "0"
+      # --- CORS ---
+      # Allowed frontend origins. Include LAN IP for multi-device access.
+      VOCALIE_CORS_ORIGINS: "http://localhost:3018,http://127.0.0.1:3018"
+      # --- Hosts ---
+      VOCALIE_ALLOWED_HOSTS: "127.0.0.1,localhost,vocalie-tts"
+      # --- Paths ---
+      # VOCALIE_WORK_DIR: "/app/work"
+      # VOCALIE_OUTPUT_DIR: "/app/output"
+      # --- TTS Limits ---
+      VOCALIE_MAX_TEXT_CHARS: "50000"
+      VOCALIE_MAX_CONCURRENT_JOBS: "2"
+      VOCALIE_RATE_LIMIT_RPS: "5"
+      VOCALIE_RATE_LIMIT_BURST: "10"
+      # --- Backend TTS ---
+      VOCALIE_BARK_TIMEOUT_S: "600"
+      VOCALIE_ENABLE_AUDIOSR: "1"
+    volumes:
+      # Persist generated audio and reference files across restarts
+      - vocalie-output:/app/output
+      - vocalie-work:/app/work
+      - vocalie-state:/app/.state
+      # Mount reference audio directory (read-only)
+      - ./Ref_audio:/app/Ref_audio:ro
+      # Hugging Face model cache (avoids re-downloading)
+      - vocalie-hf:/app/.assets
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8018/v1/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  vocalie-output:
+  vocalie-work:
+  vocalie-state:
+  vocalie-hf:

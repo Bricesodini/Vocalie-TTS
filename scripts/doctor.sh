@@ -40,15 +40,7 @@ if command -v python3 >/dev/null 2>&1; then
 fi
 
 if command -v python3 >/dev/null 2>&1; then
-  gr_versions=$(python3 - <<'PY'
-try:
-    import gradio, gradio_client
-    print(f"gradio={gradio.__version__} gradio_client={gradio_client.__version__}")
-except Exception:
-    print("gradio/gradio_client not importable")
-PY
-)
-  echo "[info] $gr_versions"
+  python3 -c 'import fastapi; print(f"[ok] fastapi={fastapi.__version__}")' || echo "[warn] fastapi not importable"
 fi
 
 if command -v node >/dev/null 2>&1; then
@@ -63,24 +55,17 @@ else
   warn=$((warn+1))
 fi
 
-if [[ -d "$ROOT_DIR/.venvs/xtts" ]]; then
-  echo "[ok] .venvs/xtts exists"
-else
-  echo "[warn] .venvs/xtts missing"
-  warn=$((warn+1))
-fi
-
-if [[ -d "$ROOT_DIR/.venvs/piper" ]]; then
-  echo "[ok] .venvs/piper exists"
-else
-  echo "[warn] .venvs/piper missing"
-  warn=$((warn+1))
-fi
-
 if [[ -d "$ROOT_DIR/.venvs/chatterbox" ]]; then
   echo "[ok] .venvs/chatterbox exists"
 else
   echo "[warn] .venvs/chatterbox missing"
+  warn=$((warn+1))
+fi
+
+if [[ -d "$ROOT_DIR/.venvs/qwen3" ]]; then
+  echo "[ok] .venvs/qwen3 exists"
+else
+  echo "[warn] .venvs/qwen3 missing"
   warn=$((warn+1))
 fi
 

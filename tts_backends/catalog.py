@@ -67,7 +67,6 @@ def get_engine_catalog() -> List[Dict[str, str]]:
 
 ENGINE_ALIAS_MAP: Dict[str, str] = {
     "chatterbox": "chatterbox_finetune_fr",
-    "xtts": "xtts_v2",
 }
 
 # Backend IDs that cannot be uninstalled (core dependencies).

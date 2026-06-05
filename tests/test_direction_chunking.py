@@ -2,6 +2,7 @@ import app
 from text_tools import MANUAL_CHUNK_MARKER, parse_manual_chunks, render_clean_text_from_segments
 
 
+
 def test_parse_manual_chunks_basic():
     chunks, count = parse_manual_chunks(f"Bonjour{MANUAL_CHUNK_MARKER}Salut")
     assert count == 1

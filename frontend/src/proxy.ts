@@ -28,7 +28,7 @@ export function proxy(request: NextRequest) {
     "font-src 'self' data:",
     `script-src ${scriptSrc}`,
     "style-src 'self' 'unsafe-inline'",
-    "connect-src 'self' http://127.0.0.1:8018 http://localhost:8018 http://localhost:7860 http://127.0.0.1:7860 ws://127.0.0.1:8018 ws://localhost:8018",
+    "connect-src 'self' http://127.0.0.1:8018 http://localhost:8018 ws://127.0.0.1:8018 ws://localhost:8018",
   ].join("; ");
 
   const requestHeaders = new Headers(request.headers);

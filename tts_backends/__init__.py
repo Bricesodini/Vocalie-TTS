@@ -18,11 +18,9 @@ from typing import Dict, List
 from .base import TTSBackend
 
 # Import backend submodules to trigger __init_subclass__ registration.
-from .bark_backend import BarkBackend  # noqa: F401
 from .chatterbox_backend import ChatterboxBackend  # noqa: F401
-from .piper_backend import PiperBackend  # noqa: F401
+from .cosyvoice_backend import CosyVoiceBackend  # noqa: F401
 from .qwen3_backend import Qwen3Backend  # noqa: F401
-from .xtts_backend import XTTSBackend  # noqa: F401
 
 # Rebuild engine catalog from registered backends.
 from .catalog import rebuild_engine_catalog

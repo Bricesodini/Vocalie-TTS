@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { Collapsible } from "@/components/collapsible";
 import { DynamicFields } from "@/components/dynamic-fields";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,8 @@ import type {
   EngineSchemaField,
   EngineSchemaResponse,
   EnginesResponse,
+  GlossaryEntry,
+  GlossaryListResponse,
   JobCreateResponse,
   JobStatusResponse,
   ModelInfo,
@@ -46,6 +49,8 @@ import type {
   PresetListItem,
   PresetListResponse,
   PresetResponse,
+  RefDirConfig,
+  RefListResponse,
   UIState,
   VoiceInfo,
 } from "@/lib/types";
@@ -187,6 +192,12 @@ export default function Home() {
   const [selectedPreset, setSelectedPreset] = useState<string>("");
   const [presetId, setPresetId] = useState<string>("");
   const [presetLabel, setPresetLabel] = useState<string>("");
+  const [glossaryEntries, setGlossaryEntries] = useState<GlossaryEntry[]>([]);
+  const [newGlossWord, setNewGlossWord] = useState("");
+  const [newGlossPron, setNewGlossPron] = useState("");
+  const [refDir, setRefDir] = useState("");
+  const [refFiles, setRefFiles] = useState<string[]>([]);
+  const [refDirInput, setRefDirInput] = useState("");
   const [prepTab, setPrepTab] = useState("raw");
   const [snapshotCursor, setSnapshotCursor] = useState(0);
   const [status, setStatus] = useState("idle");
@@ -472,6 +483,42 @@ export default function Home() {
 
   useEffect(() => {
     let active = true;
+    async function loadGlossary() {
+      try {
+        const data = await apiGet<GlossaryListResponse>("/v1/glossary");
+        if (active) setGlossaryEntries(data.entries);
+      } catch {}
+    }
+    loadGlossary();
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    async function loadRefs() {
+      const savedDir = window.localStorage.getItem("vocalie_ref_dir") || "";
+      try {
+        let dir = savedDir;
+        if (dir) {
+          try {
+            const config = await apiPut<RefDirConfig>("/v1/refs/dir", { directory: dir });
+            dir = config.directory;
+          } catch {}
+        }
+        const data = await apiGet<RefListResponse>("/v1/refs");
+        if (active) {
+          setRefDir(data.directory);
+          setRefDirInput(data.directory);
+          setRefFiles(data.files);
+        }
+      } catch {}
+    }
+    loadRefs();
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
     async function loadSchema() {
       if (!uiState.engine.engine_id) return;
       try {
@@ -617,6 +664,83 @@ export default function Home() {
       setSelectedPreset("");
     }
     await refreshPresets();
+  }
+
+  async function handleAddGlossaryEntry() {
+    const word = newGlossWord.trim();
+    const pronunciation = newGlossPron.trim();
+    if (!word || !pronunciation) return;
+    try {
+      await apiPut<GlossaryEntry>("/v1/glossary", { word, pronunciation });
+      setNewGlossWord("");
+      setNewGlossPron("");
+      const data = await apiGet<GlossaryListResponse>("/v1/glossary");
+      setGlossaryEntries(data.entries);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Impossible d'ajouter l'entrée glossaire.");
+    }
+  }
+
+  async function handleDeleteGlossaryEntry(word: string) {
+    try {
+      await apiDelete<{ word: string }>(`/v1/glossary?word=${encodeURIComponent(word)}`);
+      const data = await apiGet<GlossaryListResponse>("/v1/glossary");
+      setGlossaryEntries(data.entries);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Impossible de supprimer l'entrée glossaire.");
+    }
+  }
+
+  async function handleSetRefDir() {
+    const dir = refDirInput.trim();
+    if (!dir) return;
+    try {
+      const config = await apiPut<RefDirConfig>("/v1/refs/dir", { directory: dir });
+      setRefDir(config.directory);
+      setRefDirInput(config.directory);
+      window.localStorage.setItem("vocalie_ref_dir", config.directory);
+      const data = await apiGet<RefListResponse>("/v1/refs");
+      setRefFiles(data.files);
+      if (uiState.engine.engine_id && supportsRef) {
+        const voiceData = await fetchVoices(uiState.engine.engine_id);
+        setVoices(voiceData.voices);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Impossible de configurer le dossier.");
+    }
+  }
+
+  async function handleUploadRefs(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    try {
+      const formData = new FormData();
+      for (let i = 0; i < files.length; i++) formData.append("files", files[i]);
+      await apiPostForm<RefListResponse>("/v1/refs/upload", formData);
+      const data = await apiGet<RefListResponse>("/v1/refs");
+      setRefFiles(data.files);
+      if (uiState.engine.engine_id && supportsRef) {
+        const voiceData = await fetchVoices(uiState.engine.engine_id);
+        setVoices(voiceData.voices);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload impossible.");
+    }
+    e.target.value = "";
+  }
+
+  async function handleDeleteRef(filename: string) {
+    try {
+      await apiDelete(`/v1/refs/${encodeURIComponent(filename)}`);
+      const data = await apiGet<RefListResponse>("/v1/refs");
+      setRefFiles(data.files);
+      if (uiState.engine.engine_id && supportsRef) {
+        const voiceData = await fetchVoices(uiState.engine.engine_id);
+        setVoices(voiceData.voices);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Impossible de supprimer le fichier.");
+    }
   }
 
   async function handlePrepare() {
@@ -1675,6 +1799,63 @@ export default function Home() {
             )}
           </CardContent>
         </Card>
+
+        {/* ── Reeglages (Glossaire + Refs vocales) ─────── */}
+        <Collapsible title="Reeglages" badge={`${glossaryEntries.length} gl · ${refFiles.length} rf`}>
+          <div className="grid gap-4">
+            {/* Glossaire */}
+            <div className="grid gap-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold">Glossaire</p>
+                <div className="flex items-center gap-2">
+                  <Switch checked={uiState.preparation.glossary_enabled} onCheckedChange={(v) => setUiState((p) => ({ ...p, preparation: { ...p.preparation, glossary_enabled: v } }))} />
+                  <span className="text-xs text-zinc-500">{uiState.preparation.glossary_enabled ? "Actif" : "Inactif"}</span>
+                </div>
+              </div>
+              <div className="grid gap-2">
+                <div className="flex items-center gap-2">
+                  <Input placeholder="Mot (ex: MJC)" value={newGlossWord} onChange={(e) => setNewGlossWord(e.target.value)} className="flex-1" />
+                  <Input placeholder="Prononciation (ex: emjice)" value={newGlossPron} onChange={(e) => setNewGlossPron(e.target.value)} className="flex-1" />
+                  <Button size="sm" onClick={handleAddGlossaryEntry} disabled={!newGlossWord.trim() || !newGlossPron.trim()}>Ajouter</Button>
+                </div>
+                <div className="max-h-32 overflow-auto text-sm">
+                  {glossaryEntries.length === 0 ? <p className="text-zinc-400">Aucune entr\u00e9e.</p> : glossaryEntries.map((entry) => (
+                    <div key={entry.word} className="flex items-center justify-between border-b border-zinc-100 py-1 last:border-b-0">
+                      <span><strong>{entry.word}</strong> \u2192 {entry.pronunciation}</span>
+                      <button className="text-xs text-red-500 hover:text-red-700" onClick={() => handleDeleteGlossaryEntry(entry.word)}>Suppr.</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* References vocales */}
+            <div className="grid gap-3">
+              <p className="text-sm font-semibold">Reef\u00e9rences vocales</p>
+              <div className="flex items-center gap-2">
+                <Input value={refDirInput} onChange={(e) => setRefDirInput(e.target.value)} placeholder="/chemin/vers/Ref_audio" className="flex-1" />
+                <Button variant="outline" size="sm" onClick={handleSetRefDir}>Appliquer</Button>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-zinc-600 cursor-pointer">
+                  <span className="text-blue-600 underline">Ajouter des fichiers</span>
+                  <input type="file" accept=".wav,.mp3,.m4a,.aiff,.flac" multiple className="hidden" onChange={handleUploadRefs} />
+                </label>
+              </div>
+              {refFiles.length > 0 && (
+                <div className="max-h-28 overflow-auto text-sm">
+                  {refFiles.map((f) => (
+                    <div key={f} className="flex items-center justify-between border-b border-zinc-100 py-1 last:border-b-0">
+                      <span className="text-zinc-700">{f}</span>
+                      <button className="text-xs text-red-400 hover:text-red-600" onClick={() => handleDeleteRef(f)}>\u00d7</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-zinc-400">{refDir} · {refFiles.length} fichier{refFiles.length !== 1 ? "s" : ""}</p>
+            </div>
+          </div>
+        </Collapsible>
       </main>
     </div>
   );

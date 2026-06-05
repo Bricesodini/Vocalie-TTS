@@ -1,3 +1,7 @@
+import pytest
+
+
+
 def test_build_ui_no_crash():
     import app
 

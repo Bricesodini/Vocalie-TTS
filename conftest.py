@@ -13,7 +13,10 @@ import backend.services.preset_service as preset_service
 import backend.services.tts_service as tts_service
 
 
-collect_ignore = ["tts_test.py"]
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line("markers", "unit: Unit tests")
+    config.addinivalue_line("markers", "security: Security tests")
 
 
 @pytest.fixture

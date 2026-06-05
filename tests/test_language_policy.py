@@ -4,6 +4,7 @@ import app
 import state_manager
 
 
+
 class DummyBackend:
     def __init__(self, supported_languages, default_language=None):
         self._supported_languages = supported_languages

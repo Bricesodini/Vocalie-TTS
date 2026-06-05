@@ -2,6 +2,7 @@ import app
 from state_manager import migrate_state
 
 
+
 def test_state_defaults_direction_enabled_true():
     data = migrate_state({})
     assert data.get("direction_enabled") is True

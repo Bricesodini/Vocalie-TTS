@@ -9,6 +9,7 @@ from tts_backends import xtts_runner
 import soundfile as sf
 
 
+
 def test_xtts_manifest_exists():
     manifest = get_manifest("xtts")
     assert manifest is not None

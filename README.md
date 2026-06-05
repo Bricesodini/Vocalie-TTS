@@ -38,13 +38,9 @@ Vocalie-TTS s'adresse aux createurs audio/video qui recherchent :
 
 ## Architecture
 
-La solution a ete initialement construite autour de Gradio, puis a evolue vers une architecture API-first avec un backend et un frontend separes afin d'ameliorer la robustesse et l'experience utilisateur.
+L'architecture est API-first : le backend FastAPI est la source de verite, le frontend Next.js est le client de production.
 
-L'API est la source de verite de l'application.
-Le frontend (Next.js) et Gradio sont deux clients distincts de cette API.
-
-- Le frontend constitue l'interface utilisateur de production.
-- Gradio n'est pas une UI de production : il sert de cockpit et d'outil de debug pour explorer et controler le backend.
+Une interface de debug optionnelle (`ui_gradio/cockpit.py`) reste disponible pour le diagnostic du backend, mais n'est pas une surface de production et n'est pas requise pour le fonctionnement normal.
 
 ---
 
@@ -71,7 +67,7 @@ Baseline: `README.md` + docs de reference, etat au commit courant.
 ### Out-of-scope / Non-goals
 
 - Exposition directe de l'API sur Internet public (voir `SECURITY.md`).
-- UI Gradio comme interface de production (usage debug/cockpit uniquement).
+- Interface Gradio comme surface de production (cockpit debug optionnel, hors perimetre fonctionnel).
 - Modifications implicites du texte source pour \"ameliorer\" le style sans action explicite utilisateur.
 - Post-traitements audio appliques automatiquement sans demande explicite.
 - Support de formats de sortie autres que `wav` sur les endpoints de generation actuels.

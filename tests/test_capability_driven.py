@@ -12,6 +12,7 @@ import state_manager
 import soundfile as sf
 
 
+
 def test_param_schema_contract():
     for backend in list_backends():
         errors = validate_param_schema(backend.params_schema())

@@ -9,7 +9,6 @@ import pytest
 
 pytestmark = pytest.mark.security
 
-import pytest
 from fastapi.testclient import TestClient
 
 

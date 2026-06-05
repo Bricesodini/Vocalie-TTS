@@ -27,12 +27,15 @@ check_pid() {
 
 check_pid "backend"
 check_pid "frontend"
-check_pid "cockpit"
+
+if [[ "${WITH_COCKPIT:-0}" == "1" ]]; then
+  check_pid "cockpit"
+fi
 
 if command -v lsof >/dev/null 2>&1; then
   echo ""
   echo "Ports:"
-  for port in 8018 3018 7860; do
+  for port in 8018 3018; do
     if lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
       echo "- $port: listening"
     else

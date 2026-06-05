@@ -16,13 +16,13 @@
 - Tradeoffs: adds documentation gate overhead.
 - Evidence links: `reports/scope-freeze-20260311-2211.md`, `.github/workflows/ci.yml`
 
-## DEC-003 — Production UI is Next.js; Gradio is compatibility cockpit
-- Status: Accepted
+## DEC-003 — Production UI is Next.js; Gradio is optional debug cockpit
+- Status: Accepted (updated)
 - Date: 2026-03-12
-- Decision: frontend production flows are carried by `frontend/src`; Gradio remains non-production compatibility surface.
-- Why: aligns architecture with current operational model.
-- Tradeoffs: dual surfaces require migration discipline.
-- Evidence links: `README.md`, `docs/reports/TECH_DEBT_AUDIT_2026-03-11.md`
+- Decision: frontend production flows are carried by `frontend/src`. The Gradio cockpit (`ui_gradio/`) is an optional debug tool, not a production surface, and is not required for normal operation.
+- Why: aligns architecture with current operational model; removes dual-surface confusion.
+- Tradeoffs: `ui_gradio/` still depends on `gradio` in requirements but is decoupled from production flow.
+- Evidence links: `README.md`, `docs/CONVENTIONS.md`
 
 ## DEC-004 — Canonical environment policy is centralized
 - Status: Accepted

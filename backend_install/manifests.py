@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
@@ -28,40 +27,7 @@ MANIFESTS: Dict[str, BackendManifest] = {
         import_probes=["chatterbox"],
         post_install_checks=[["-c", "import chatterbox; print('OK')"]],
     ),
-    "xtts": BackendManifest(
-        engine_id="xtts",
-        python=sys.executable,
-        pip_packages=[
-            "TTS==0.22.0",
-            "torch==2.2.2",
-            "torchaudio==2.2.2",
-            "transformers==4.39.3",
-            "huggingface_hub<1.0",
-            "sentencepiece",
-            "soundfile",
-            "scipy",
-            "numpy<2.4",
-        ],
-        system_hints=["ffmpeg (recommandé)"],
-        import_probes=["TTS"],
-        post_install_checks=[["-c", "import TTS; print('OK')"]],
-    ),
-    "piper": BackendManifest(
-        engine_id="piper",
-        python="python3.11",
-        pip_packages=["piper-tts"],
-        system_hints=["espeak-ng (parfois requis selon les voix)", "ffmpeg (optionnel)"],
-        import_probes=["piper", "piper_tts"],
-        post_install_checks=[["-c", "import piper; print('OK')"]],
-    ),
-    "bark": BackendManifest(
-        engine_id="bark",
-        python="python3.11",
-        pip_packages=["-r", "requirements-bark.txt"],
-        system_hints=["ffmpeg (recommandé)"],
-        import_probes=["bark"],
-        post_install_checks=[["-c", "import bark; print('OK')"]],
-    ),
+
     "qwen3": BackendManifest(
         engine_id="qwen3",
         python="python3.11",
@@ -73,6 +39,24 @@ MANIFESTS: Dict[str, BackendManifest] = {
         system_hints=["ffmpeg (optionnel)"],
         import_probes=["qwen_tts"],
         post_install_checks=[["-c", "import qwen_tts; print('OK')"]],
+    ),
+    "cosyvoice": BackendManifest(
+        engine_id="cosyvoice",
+        python="python3.10",
+        pip_packages=[
+            "torch",
+            "torchaudio",
+            "soundfile",
+            "conformer",
+            "diffusers",
+            "inflect",
+            "pydantic",
+            "numpy",
+            "huggingface_hub",
+        ],
+        system_hints=["NVIDIA GPU ≥ 8GB VRAM", "ffmpeg (recommended)", "sox + libsox-dev (Ubuntu)"],
+        import_probes=["cosyvoice"],
+        post_install_checks=[["-c", "from cosyvoice.cli.cosyvoice import AutoModel; print('OK')"]],
     ),
 }
 

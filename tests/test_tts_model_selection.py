@@ -7,6 +7,8 @@ import app
 from text_tools import ChunkInfo, SpeechSegment, estimate_duration
 from tts_engine import TTSEngine
 
+pytestmark = pytest.mark.gradio_legacy
+
 
 def test_handle_engine_change_enables_language():
     updates = app.handle_engine_change(

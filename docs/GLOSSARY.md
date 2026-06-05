@@ -1,7 +1,7 @@
 # Glossary
 
 - Engine ID: canonical engine identifier exposed by `/v1/tts/engines` (source: `backend/routes/tts.py`).
-- Legacy engine alias: historical engine naming used by compatibility mappings (sources: `state_manager.py`, `backend/services/preset_service.py`).
+- Legacy engine alias: historical engine naming used by compatibility mappings (source: `tts_backends/catalog.py`, `backend/services/preset_service.py`).
 - Preset: persisted generation configuration (sources: `backend/schemas/models.py`, `backend/services/preset_service.py`).
 - UIState: canonical API preset/state model shape (source: `backend/schemas/models.py`).
 - Direction chunking: explicit marker/range-based segmentation before synthesis (sources: `backend/routes/chunks.py`, `text_tools.py`).

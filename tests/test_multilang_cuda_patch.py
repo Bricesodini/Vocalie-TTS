@@ -6,6 +6,7 @@ pytest.importorskip("chatterbox")
 import tts_engine
 
 
+
 def test_multilang_cuda_checkpoint_patch(monkeypatch):
     calls = {"count": 0, "map_location": []}
 

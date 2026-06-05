@@ -31,3 +31,20 @@ presets/*
 !presets/example.json
 # Codex reports (auto-generated)
 reports/
+
+# Personal working files (never commit)
+gilles
+
+# Archive (preserved in git but not agent context)
+archive/
+
+# One-shot work artifacts (not agent context)
+context.md
+progress.md
+# Stale work artifacts
+docs/runs/
+docs/audits/
+docs/reports/
+
+# Agent runtime artifacts
+.pi/
