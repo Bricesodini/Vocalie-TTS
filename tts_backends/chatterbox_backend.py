@@ -223,11 +223,18 @@ def _build_runner_suffix(
     lang: Optional[str],
     params: dict[str, Any],
 ) -> dict:
-    """Build the extra keys for a chunk-level subprocess payload."""
-    return _build_runner_payload(
-        text="",  # placeholder — _run_subprocess_chunk sets text
-        out_wav_path="",  # placeholder — _run_subprocess_chunk sets out_path
+    """Build the extra keys for a chunk-level subprocess payload.
+
+    Returns a dict that does NOT include ``text`` or ``out_wav_path`` —
+    these are set by ``_run_subprocess_chunk`` and must not be overridden.
+    """
+    payload = _build_runner_payload(
+        text="__PLACEHOLDER_NOT_OVERWRITTEN__",
+        out_wav_path="__PLACEHOLDER_NOT_OVERWRITTEN__",
         voice_ref_path=voice_ref_path,
         lang=lang,
         params=params,
     )
+    payload.pop("text", None)
+    payload.pop("out_wav_path", None)
+    return payload
