@@ -168,7 +168,6 @@ export default function Home() {
   const [presetId, setPresetId] = useState<string>("");
   const [presetLabel, setPresetLabel] = useState<string>("");
   const [models, setModels] = useState<ModelInfo[]>([]);
-  const [prepTab, setPrepTab] = useState("raw");
   const [editedPath, setEditedPath] = useState<string | null>(null);
   const [snapshotCursor, setSnapshotCursor] = useState(0);
   const prepareTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -344,22 +343,6 @@ export default function Home() {
   async function handleSavePreset() { if (!presetId) return; const payload = { id: presetId, label: presetLabel || presetId, state: { ...uiState, preset_id: presetId } }; const exists = presets.some((p) => p.id === presetId); if (exists) await apiPut(`/v1/presets/${presetId}`, payload); else await apiPost("/v1/presets", payload); await refreshPresets(); }
   async function handleDeletePreset() { if (!presetId) return; await apiDelete(`/v1/presets/${presetId}`); if (selectedPreset === presetId) setSelectedPreset(""); await refreshPresets(); }
 
-  async function handlePrepare() {
-    setError(null);
-    const adjust = await apiPost<PrepAdjustResponse>("/v1/prep/adjust", { text_raw: uiState.preparation.text_raw });
-    const interpret = await apiPost<PrepInterpretResponse>("/v1/prep/interpret", { text_adjusted: adjust.text_adjusted, glossary_enabled: uiState.preparation.glossary_enabled, glossary_profile: uiState.preparation.glossary_profile, glossary_options: uiState.preparation.glossary_options });
-    setUiState((p) => ({ ...p, preparation: { ...p.preparation, text_adjusted: adjust.text_adjusted, text_interpreted: interpret.text_interpreted } }));
-    setPrepTab("interpreted");
-  }
-
-  async function handleSnapshot() {
-    setError(null);
-    try {
-      const resp = await apiPost<ChunkSnapshotResponse>("/v1/chunks/snapshot", { snapshot_text: uiState.direction.snapshot_text, chunk_markers: uiState.direction.chunk_markers });
-      setUiState((p) => ({ ...p, direction: { ...p.direction, snapshot_text: resp.snapshot_text } }));
-    } catch (err) { setError(err instanceof Error ? err.message : "Snapshot impossible."); }
-  }
-
   async function handleMarker(action: "insert" | "remove") {
     setError(null);
     try {
@@ -367,25 +350,6 @@ export default function Home() {
       setUiState((p) => ({ ...p, direction: { ...p.direction, snapshot_text: resp.snapshot_text_updated, chunk_markers: resp.markers_updated } }));
       setUserEditedSnapshot(true);
     } catch (err) { setError(err instanceof Error ? err.message : "Impossible de modifier le marqueur."); }
-  }
-
-  async function handlePreview() {
-    setError(null);
-    try {
-      const resp = await apiPost<ChunkPreviewResponse>("/v1/chunks/preview", { snapshot_text: uiState.direction.snapshot_text });
-      setUiState((p) => ({ ...p, direction: { ...p.direction, chunks_preview: resp.chunks } }));
-    } catch (err) { setError(err instanceof Error ? err.message : "Apercu impossible."); }
-  }
-
-  async function handleInsertSeparator() {
-    const response = await apiPost<ChunkMarkerResponse>("/v1/chunks/apply_marker", { snapshot_text: uiState.direction.snapshot_text, action: "insert", position: snapshotCursor });
-    setUiState((prev) => ({ ...prev, direction: { ...prev.direction, snapshot_text: response.snapshot_text_updated, chunk_markers: response.markers_updated } }));
-    setUserEditedSnapshot(true);
-  }
-  async function handleRemoveSeparator() {
-    const response = await apiPost<ChunkMarkerResponse>("/v1/chunks/apply_marker", { snapshot_text: uiState.direction.snapshot_text, action: "remove", position: snapshotCursor });
-    setUiState((prev) => ({ ...prev, direction: { ...prev.direction, snapshot_text: response.snapshot_text_updated, chunk_markers: response.markers_updated } }));
-    setUserEditedSnapshot(true);
   }
 
   // Handle text change in the unified textarea
@@ -512,68 +476,68 @@ export default function Home() {
         </Collapsible>
 
         {/* ── Preparation — tabs + glossaire ───────────── */}
-        <Collapsible title="Preparation" defaultOpen>
+        <Collapsible title="Texte" defaultOpen>
           <div className="grid gap-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <Switch checked={uiState.preparation.glossary_enabled} onCheckedChange={(v) => setUiState((p) => ({ ...p, preparation: { ...p.preparation, glossary_enabled: v } }))} />
                 <span className="text-sm text-zinc-600">{uiState.preparation.glossary_enabled ? "Glossaire actif" : "Glossaire inactif"}</span>
+                {uiState.preparation.glossary_enabled && <span className="text-xs text-zinc-400">(auto)</span>}
               </div>
-              <Button size="sm" onClick={handlePrepare} disabled={!uiState.preparation.text_raw.trim()}>Preparer</Button>
-            </div>
-            <div className="inline-flex items-center gap-2 rounded-full bg-zinc-100 p-1">
-              {(["raw", "adjusted", "interpreted"] as const).map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${prepTab === tab ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-900"}`}
-                  onClick={() => setPrepTab(tab)}
-                >{tab === "raw" ? "Texte" : tab === "adjusted" ? "Ajuste" : "Interprete"}</button>
-              ))}
-            </div>
-            <Textarea
-              value={prepTab === "raw" ? uiState.preparation.text_raw : prepTab === "adjusted" ? uiState.preparation.text_adjusted : uiState.preparation.text_interpreted}
-              onChange={(e) => { if (prepTab === "raw") { setUiState((p) => ({ ...p, preparation: { ...p.preparation, text_raw: e.target.value } })); handleTextChange(e.target.value); } }}
-              readOnly={prepTab !== "raw"}
-              placeholder={prepTab === "raw" ? "Saisissez votre texte ici..." : prepTab === "adjusted" ? "Texte ajuste par le glossaire" : "Texte interprete final"}
-              rows={6}
-            />
-          </div>
-        </Collapsible>
-
-        {/* ── Direction (Chunking) ───────────── */}
-        <Collapsible title="Direction" defaultOpen>
-          <div className="grid gap-3">
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => handleMarker("insert")}>Inserer separateur</Button>
-              <Button variant="outline" size="sm" onClick={() => handleMarker("remove")}>Retirer separateur</Button>
-              <Button variant="outline" size="sm" onClick={handlePreview}>Apercu chunks</Button>
-              {uiState.direction.chunk_markers.length > 0 && (
-                <span className="text-xs text-zinc-500">{uiState.direction.chunk_markers.length} separateur{uiState.direction.chunk_markers.length > 1 ? "s" : ""}</span>
-              )}
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => handleMarker("insert")}>Insérer séparateur</Button>
+                <Button variant="outline" size="sm" onClick={() => handleMarker("remove")}>Retirer séparateur</Button>
+                {uiState.direction.chunk_markers.length > 0 && (
+                  <span className="text-xs text-zinc-500">{uiState.direction.chunk_markers.length} séparateur{uiState.direction.chunk_markers.length > 1 ? "s" : ""}</span>
+                )}
+              </div>
             </div>
             <Textarea
               value={uiState.direction.snapshot_text}
-              onChange={(e) => { setUiState((p) => ({ ...p, direction: { ...p.direction, snapshot_text: e.target.value } })); setUserEditedSnapshot(true); scheduleAutoPrepare(e.target.value); }}
+              onChange={(e) => {
+                const v = e.target.value;
+                setUiState((p) => ({
+                  ...p,
+                  direction: { ...p.direction, snapshot_text: v },
+                  preparation: { ...p.preparation, text_raw: v },
+                }));
+                setUserEditedSnapshot(true);
+                scheduleAutoPrepare(v);
+              }}
               onSelect={(e) => setSnapshotCursor(e.currentTarget.selectionStart ?? 0)}
-              placeholder="Texte snapshot pour placer les chunks"
-              rows={4}
+              onKeyUp={(e) => setSnapshotCursor(e.currentTarget.selectionStart ?? 0)}
+              onClick={(e) => setSnapshotCursor(e.currentTarget.selectionStart ?? 0)}
+              placeholder="Saisissez votre texte ici. Cliquez dans la zone puis utilisez « Insérer séparateur » pour placer un [[CHUNK]] au curseur."
+              rows={8}
             />
-            {uiState.direction.chunks_preview.length > 0 && (
+            {uiState.preparation.text_adjusted && uiState.preparation.text_adjusted !== uiState.direction.snapshot_text && (
+              <div className="grid gap-1">
+                <p className="text-xs font-semibold uppercase text-zinc-500">Aperçu normalisé (lexique)</p>
+                <Textarea
+                  value={uiState.preparation.text_adjusted}
+                  readOnly
+                  rows={4}
+                  className="bg-zinc-50 text-zinc-700"
+                />
+              </div>
+            )}
+          </div>
+        </Collapsible>
+
+        {/* ── Aperçu des chunks (auto) ─────────── */}
+        <Collapsible title="Aperçu des chunks" defaultOpen>
+          <div className="grid gap-3">
+            {uiState.direction.chunks_preview.length === 0 ? (
+              <p className="text-sm text-zinc-500">Saisissez du texte pour voir l’aperçu des chunks.</p>
+            ) : (
               <div className="flex flex-wrap gap-2">
-                {uiState.direction.chunks_preview.map((chunk) => {
-                  const canRemove = chunk.index > 1 && uiState.direction.chunk_markers.length >= chunk.index - 1;
-                  return (
-                    <div key={chunk.index} className="group relative flex flex-col items-start rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm transition-colors hover:border-amber-300 hover:bg-amber-50">
-                      {canRemove && (
-                        <button type="button" className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-zinc-300 text-xs text-white opacity-0 transition-opacity hover:bg-red-500 group-hover:opacity-100" title="Fusionner" onClick={async () => { const markerPos = uiState.direction.chunk_markers[chunk.index - 2]; const response = await apiPost<ChunkMarkerResponse>("/v1/chunks/apply_marker", { snapshot_text: uiState.direction.snapshot_text, action: "remove", position: markerPos }); setUiState((prev) => ({ ...prev, direction: { ...prev.direction, snapshot_text: response.snapshot_text_updated, chunk_markers: response.markers_updated } })); setUserEditedSnapshot(true); }}>×</button>
-                      )}
-                      <span className="font-semibold text-zinc-800">#{chunk.index}</span>
-                      <span className="text-xs text-zinc-500">{chunk.word_count ?? "-"} mots · {chunk.est_duration_s ? chunk.est_duration_s.toFixed(1) : "--"}s</span>
-                      <span className="mt-0.5 line-clamp-2 text-zinc-600">{chunk.text}</span>
-                    </div>
-                  );
-                })}
+                {uiState.direction.chunks_preview.map((chunk) => (
+                  <div key={chunk.index} className="flex flex-col items-start rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm">
+                    <span className="font-semibold text-zinc-800">#{chunk.index}</span>
+                    <span className="text-xs text-zinc-500">{chunk.word_count ?? "-"} mots · {chunk.est_duration_s ? chunk.est_duration_s.toFixed(1) : "--"}s</span>
+                    <span className="mt-0.5 line-clamp-3 text-zinc-600">{chunk.text}</span>
+                  </div>
+                ))}
               </div>
             )}
           </div>

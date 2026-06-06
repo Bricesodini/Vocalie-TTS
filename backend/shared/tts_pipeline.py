@@ -24,6 +24,68 @@ from backend.shared.text_tools import (
 
 
 TARGET_SR = 24000
+MIN_WORDS_FOR_SYNTHESIS = 6  # Below this, text is padded via repetition to avoid model hallucination
+MIN_EST_SECONDS_FOR_SYNTHESIS = 2.0  # Minimum estimated duration for stable synthesis
+
+
+def _pad_short_text(text: str, min_words: int = MIN_WORDS_FOR_SYNTHESIS) -> tuple[str, int]:
+    """Repeat short text to reach minimum word count for stable TTS synthesis.
+
+    Models like Chatterbox hallucinate fallback phrases ("You need to add
+    some text...") when given very short inputs. Repeating the text gives
+    the model enough prosodic context to produce natural output.
+
+    Returns (padded_text, repetition_count) where repetition_count is 1
+    if no padding was needed.
+    """
+    if not text or not text.strip():
+        return text, 1
+    words = text.split()
+    word_count = len(words)
+    if word_count >= min_words:
+        return text, 1
+    # Calculate how many repetitions we need
+    reps = -(-min_words // word_count)  # ceil division
+    # Add punctuation between repetitions for natural prosody
+    separator = " " if text.rstrip().endswith((".", "!", "?")) else ". "
+    padded = (text + separator).join([text] * reps) if reps > 1 else text
+    # Remove trailing separator if present
+    padded = padded.rstrip()
+    return padded, reps
+
+
+def _trim_audio_to_expected_duration(
+    audio: np.ndarray,
+    estimated_duration_s: float,
+    sr: int,
+    padding_ratio: float = 0.15,
+) -> np.ndarray:
+    """Trim audio that was generated from repeated text back to the expected
+    duration for the original text, plus a small margin.
+
+    padding_ratio adds extra headroom (15% by default) so we don't clip
+    the tail of the last word.
+    """
+    if audio.size == 0 or estimated_duration_s <= 0:
+        return audio
+    target_samples = int(estimated_duration_s * sr * (1.0 + padding_ratio))
+    # Snap to nearest zero crossing for clean cut
+    if target_samples < len(audio):
+        search_start = max(0, target_samples - int(sr * 0.1))
+        search_end = min(len(audio), target_samples + int(sr * 0.3))
+        if search_end > search_start:
+            window = np.abs(audio[search_start:search_end])
+            quiet_idx = search_start + int(np.argmin(window))
+            # Find next zero crossing after quiet point
+            zero_cross = quiet_idx
+            for i in range(quiet_idx, min(quiet_idx + int(sr * 0.05), len(audio) - 1)):
+                if (audio[i] <= 0 < audio[i + 1]) or (audio[i] >= 0 > audio[i + 1]):
+                    zero_cross = i + 1
+                    break
+            target_samples = max(target_samples, zero_cross)
+        audio = audio[:target_samples]
+    return audio
+
 
 
 @dataclass(frozen=True)
@@ -290,6 +352,14 @@ def run_tts_pipeline(request: dict, progress_cb=None) -> PipelineResult:
         clean_text = render_clean_text_from_segments(chunk_segments)
         clean_text = strip_legacy_tokens(clean_text)
         segments_count_total += 1
+        # Pad short text to avoid model fallback ("You need to add some text...")
+        # when the chunk is too short for stable synthesis.
+        clean_text, _reps = _pad_short_text(clean_text)
+        if not clean_text.strip():
+            # Skip empty chunks to avoid sending zero-length text to the engine.
+            if progress_cb and chunks:
+                progress_cb(idx / float(len(chunks)))
+            continue
         result = backend.synthesize_chunk(
             clean_text,
             voice_ref_path=voice_ref_path,
