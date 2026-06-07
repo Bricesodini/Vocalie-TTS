@@ -44,6 +44,8 @@ services:
       - vocalie-output:/app/output
       - vocalie-work:/app/work
       - vocalie-state:/app/.state
+      # Persist backend virtualenvs (chatterbox, qwen3) across image rebuilds
+      - vocalie-venvs:/app/.venvs
       # Mount reference audio directory (read-only)
       - ./Ref_audio:/app/Ref_audio:ro
       # Hugging Face model cache (avoids re-downloading)
@@ -53,11 +55,14 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8018/v1/health')"]
       interval: 30s
       timeout: 5s
-      start_period: 15s
+      # First start installs chatterbox + qwen3 venvs (~5-10 min total).
+      # Subsequent starts are instant (venv volume is persistent).
+      start_period: 600s
       retries: 3
 
 volumes:
   vocalie-output:
   vocalie-work:
   vocalie-state:
+  vocalie-venvs:
   vocalie-hf:

@@ -3,6 +3,17 @@
 # Starts both backend (uvicorn) and frontend (next start) in the container.
 set -euo pipefail
 
+# --- Install backend venvs on first start (idempotent, persisted in a volume) ---
+# Skip with VOCALIE_SKIP_VENV_INSTALL=1 if venvs are pre-baked into the image.
+if [ "${VOCALIE_SKIP_VENV_INSTALL:-0}" != "1" ]; then
+    echo "Ensuring backend venvs are installed (first start may take several minutes)..."
+    if ! bash /app/docker/install-venvs.sh; then
+        echo "WARNING: one or more venvs failed to install. The container will start anyway," >&2
+        echo "         but TTS jobs for unbuilt backends will fail. Re-run install-venvs.sh" >&2
+        echo "         or check 'docker logs vocalie-tts' for details." >&2
+    fi
+fi
+
 # --- Start backend ---
 echo "Starting Vocalie-TTS backend on :8018..."
 uvicorn backend.app:app \

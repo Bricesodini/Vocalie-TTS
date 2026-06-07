@@ -38,6 +38,7 @@ FROM python:3.11-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libstdc++6 \
+    python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r vocalie && useradd -r -g vocalie vocalie
@@ -89,6 +90,10 @@ EXPOSE 3018
 # Health check on backend
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8018/v1/health')" || exit 1
+
+# Backend venv installer (creates /app/.venvs/{chatterbox,qwen3} on first start)
+COPY docker/install-venvs.sh /app/docker/install-venvs.sh
+RUN chmod +x /app/docker/install-venvs.sh
 
 # Use our process manager
 COPY docker/entrypoint.sh /entrypoint.sh
