@@ -53,3 +53,7 @@ docs/reports/
 *.egg-info/
 build/
 dist/
+
+# Swift / macOS app build output
+apps/macos/.build/
+apps/macos/build/

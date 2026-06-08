@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.vocalie.tts</string>
+
+    <!--
+      Path to the .app bundle. Update this if you move the app to
+      /Applications or somewhere else. The default below assumes a
+      developer build in the repo's apps/macos/build directory.
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/open</string>
+        <string>-W</string>
+        <string>-n</string>
+        <string>__REPLACE_WITH_ABSOLUTE_PATH_TO_Vocalie-TTS.app__</string>
+    </array>
+
+    <!--
+      LaunchAgent runs at user login. KeepAlive=false so it doesn't
+      try to resurrect if you manually quit the app.
+    -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+
+    <!--
+      Standard I/O goes to the system log. View with:
+        log stream --predicate 'process == "Vocalie-TTS"'
+    -->
+    <key>StandardOutPath</key>
+    <string>/tmp/vocalie-tts.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/vocalie-tts.err.log</string>
+</dict>
+</plist>
