@@ -18,6 +18,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from tts_backends.chatterbox_impl import ChatterboxEngine
+from tts_backends.base_runner import BaseSubprocessRunner
 
 
 def _read_payload() -> dict:
@@ -100,6 +101,11 @@ def _synthesize_chunk(
 
 def main() -> int:
     try:
+        # Configure HF cache to a writable location inside the container.
+        # In Docker, $HOME=/home/vocalie but /home/vocalie/.cache is not
+        # writable by the vocalie user, so transformers warns and tries
+        # to fall back. Force everything to /app/.assets/chatterbox/.hf.
+        BaseSubprocessRunner.setup_hf_cache("/app/.assets/chatterbox")
         payload = _read_payload()
         text = str(payload.get("text") or "")
         out_path = payload.get("out_wav_path") or payload.get("out_path")
