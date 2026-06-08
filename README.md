@@ -195,6 +195,12 @@ cp .env.example .env
 export HUGGINGFACE_TOKEN=<token-avec-acces>
 ./scripts/install-chatterbox-weights.sh Thomcles/Chatterbox-TTS-French
 
+# Install vocalie-backend CLI (entry point for the Swift app)
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install -e .
+
 # Frontend macOS
 cd frontend
 npm install --include=optional --no-audit --progress=false
@@ -213,6 +219,41 @@ AudioSR (amelioration audio) est installe par defaut via bootstrap.
 ```bash
 ./scripts/install-audiosr-venv.sh
 ```
+
+---
+
+## CLI `vocalie-backend`
+
+Le paquet expose une commande unique `vocalie-backend` (aussi appelable
+via `python -m vocalie_backend`) qui est l'API machine utilisee par
+l'app macOS native. Elle remplace le trio `scripts/dev-backend.sh` +
+`scripts/stop.sh` + `scripts/doctor.sh` par des sous-commandes JSON.
+
+```bash
+vocalie-backend install          # cree .venv + pip install -r requirements.txt
+vocalie-backend start --wait     # lance uvicorn en arriere-plan, attend /v1/health
+vocalie-backend stop             # SIGTERM le backend
+vocalie-backend status --json    # { running, pid, host, port, log_file, ... }
+vocalie-backend health --json    # GET /v1/health -> latence, body, erreur
+vocalie-backend doctor           # python3, ffmpeg, sox, node, .venv presents
+vocalie-backend logs -f          # tail -f .run/backend.log
+```
+
+Tous les etats sont remontes en JSON (drapeau `--json` ou implicite
+sur `status`/`health`) pour que l'app Swift puisse les parser.
+
+Codes de sortie :
+
+| Code | Sens |
+|------|------|
+| 0 | succes |
+| 1 | erreur generique |
+| 2 | service non tourne (status) |
+| 3 | port deja utilise (start) |
+| 4 | dependance manquante (venv absente, etc.) |
+
+Le PID et les logs vivent dans `.run/backend.{pid,log}`. La commande
+est idempotente : `stop` sur un service arrete retourne 0.
 
 ---
 

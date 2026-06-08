@@ -12,3 +12,25 @@ exclude = [
 [tool.ruff.lint]
 select = ["E9", "F63", "F7", "F82"]
 
+[project]
+name = "vocalie-tts"
+version = "0.1.0"
+description = "Local-first TTS production stack"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+vocalie-backend = "vocalie_backend.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["vocalie_backend*"]
+exclude = [
+  "backend*",
+  "tts_backends*",
+  "tests*",
+  "scripts*",
+  "frontend*",
+  "ui_gradio*",
+  "archive*",
+  "docs*",
+]

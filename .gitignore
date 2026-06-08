@@ -48,3 +48,8 @@ docs/reports/
 
 # Agent runtime artifacts
 .pi/
+
+# Python package build artifacts
+*.egg-info/
+build/
+dist/
