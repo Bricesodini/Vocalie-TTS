@@ -33,19 +33,28 @@ as a subprocess and reflects its JSON output in a menu-bar icon.
 
 ```bash
 cd apps/macos
-./Scripts/build-app.sh    # release build → build/Vocalie-TTS.app
-open build/Vocalie-TTS.app
+./Scripts/build-app.sh
 ```
 
-The build script:
-1. Runs `swift build -c release`
-2. Copies the binary into `Vocalie-TTS.app/Contents/MacOS/`
-3. Writes a minimal `Info.plist` with `LSUIElement=true` so the
-   app stays out of the Dock
+Produces two artifacts in `apps/macos/build/`:
+- `Vocalie-TTS.app` — ad-hoc signed bundle
+- `Vocalie-TTS-0.1.0-arm64.dmg` — drag-to-Applications installer
 
-No Xcode project, no signing, no notarization — the bundle is a
-"developer" build. To distribute to other Macs you'll need to
-add code signing (see Future work below).
+The build script:
+1. `swift build -c release`
+2. Wraps the binary in `Vocalie-TTS.app/Contents/MacOS/` with a
+   minimal `Info.plist` (`LSUIElement=true` so the app stays out
+   of the Dock)
+3. Ad-hoc code-signs the bundle (`codesign --sign -`) so it
+   passes `codesign --verify` and Gatekeeper doesn't block it on
+   the developer's own Mac
+4. Builds a compressed read-only DMG with `hdiutil` and a
+   `/Applications` symlink for drag-install
+
+No Xcode project, no notarization — the bundle is a "developer"
+build suitable for personal use and for sharing with trusted
+machines. To distribute to other Macs without the
+"unidentified developer" warning, see [Notarization](#notarization-for-distribution) below.
 
 ## Run from source (debug)
 
@@ -97,11 +106,52 @@ apps/macos/
     └── Vocalie-TTS.app
 ```
 
+## Notarization for distribution
+
+Ad-hoc signing works for the developer but other Macs will see
+"unidentified developer" and refuse to launch. To distribute
+properly, you need an Apple Developer ID ($99/year) and
+notarization. The full flow:
+
+```bash
+# 1. Build as usual
+./Scripts/build-app.sh
+
+# 2. Replace the ad-hoc sign with your real identity
+codesign --force --deep \
+    --sign "Developer ID Application: Your Name (TEAMID)" \
+    build/Vocalie-TTS.app
+
+# 3. Zip the .app (notarization needs a stable container)
+ditto -c -k --sequesterRsrc --keepParent \
+    build/Vocalie-TTS.app \
+    build/Vocalie-TTS.zip
+
+# 4. Submit to Apple for notarization
+xcrun notarytool submit build/Vocalie-TTS.zip \
+    --apple-id "you@example.com" \
+    --team-id "TEAMID" \
+    --password "app-specific-password" \
+    --wait
+
+# 5. Staple the notarization ticket to the .app
+xcrun stapler staple build/Vocalie-TTS.app
+
+# 6. Rebuild the DMG so the stapled ticket is inside it
+hdiutil create -ov -format UDZO -fs HFS+ \
+    -srcfolder build/dmg-stage \
+    -volname "Vocalie-TTS" \
+    build/Vocalie-TTS-0.1.0-arm64.dmg
+```
+
+The current `build-app.sh` only does step 1 (ad-hoc). To
+automate the rest, set `CODESIGN_IDENTITY` and the credentials
+in your environment and wrap steps 2–6 in a second script.
+
 ## Future work (out of scope for v0.1)
 
 - **Code signing + notarization** so the .app can be distributed
   without "unidentified developer" warnings.
-- **DMG packaging** for friendlier distribution.
 - **Sparkle auto-update** to push new versions without re-download.
 - **Per-engine status** (currently the menu shows only aggregate
   backend state; the Python CLI already knows per-engine availability
