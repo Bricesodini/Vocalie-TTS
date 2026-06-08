@@ -46,11 +46,14 @@ def _pad_short_text(text: str, min_words: int = MIN_WORDS_FOR_SYNTHESIS) -> tupl
         return text, 1
     # Calculate how many repetitions we need
     reps = -(-min_words // word_count)  # ceil division
-    # Add punctuation between repetitions for natural prosody
-    separator = " " if text.rstrip().endswith((".", "!", "?")) else ". "
-    padded = (text + separator).join([text] * reps) if reps > 1 else text
-    # Remove trailing separator if present
-    padded = padded.rstrip()
+    # Add punctuation between repetitions for natural prosody.
+    # Use `separator.join(...)` (NOT `(text + separator).join(...)`),
+    # otherwise each element appears 3 times instead of reps.
+    if text.rstrip().endswith((".", "!", "?")):
+        separator = " "
+    else:
+        separator = ". "
+    padded = separator.join([text] * reps) if reps > 1 else text
     return padded, reps
 
 
