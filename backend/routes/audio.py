@@ -12,6 +12,7 @@ from backend.shared.audio_defaults import SILENCE_MIN_MS, SILENCE_THRESHOLD
 import backend.config as backend_config
 from backend.schemas.models import AudioEditRequest, AudioEditResponse, AudioEnhanceResponse
 from backend.rate_limit import enforce_heavy
+from backend.security import safe_filename
 from backend.services import asset_service
 from backend.services import audiosr_service
 from backend.shared.audio_edit import apply_minimal_edit, audio_meta
@@ -40,7 +41,14 @@ def _peak_dbfs(peak: float) -> float:
 
 
 async def _save_upload(upload: UploadFile, *, max_bytes: int) -> Path:
-    suffix = Path(upload.filename or "audio").suffix or ".bin"
+    safe_name = safe_filename(upload.filename or "")
+    suffix = Path(safe_name).suffix.lower()
+    # Whitelist audio container extensions only. Reject anything that
+    # can't be processed (script files, HTML, archives, etc.) with 415
+    # so the caller knows it's a media-type problem, not a server error.
+    allowed_suffixes = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".opus"}
+    if suffix not in allowed_suffixes:
+        raise HTTPException(status_code=415, detail="unsupported_media_type")
     upload_dir = backend_config.WORK_DIR / "uploads" / "audiosr"
     upload_dir.mkdir(parents=True, exist_ok=True)
     path = upload_dir / f"audiosr_{uuid.uuid4().hex}{suffix}"

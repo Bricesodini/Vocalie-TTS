@@ -110,4 +110,9 @@ def safe_filename(name: str) -> str:
         raise ValueError("invalid_name")
     if ".." in candidate:
         raise ValueError("invalid_name")
+    # 200 chars is comfortably under the POSIX 255 filesystem limit and
+    # matches the long-filename test contract. Reject anything that long
+    # or longer.
+    if len(candidate) >= 200:
+        raise ValueError("invalid_name")
     return candidate
