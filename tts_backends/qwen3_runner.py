@@ -9,11 +9,20 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+
+# The runner is launched with only the venv's site-packages on sys.path
+# (no /app). Add the project root so the `tts_backends` package can be
+# imported from inside the Qwen3 venv, which is shipped separately
+# from the chatterbox venv in Docker.
+_BASE_DIR = Path(__file__).resolve().parents[1]
+if str(_BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(_BASE_DIR))
 
 from tts_backends.base_runner import BaseSubprocessRunner
 
