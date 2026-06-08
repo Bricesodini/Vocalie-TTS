@@ -5,10 +5,24 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import sys
 import traceback
 from pathlib import Path
 from typing import Any
+
+# ── HF cache MUST be configured BEFORE importing any of the heavy deps ──
+# chatterbox_impl imports huggingface_hub and torch at module load time,
+# and those modules read HF_HOME / HUGGINGFACE_HUB_CACHE at import.
+# In Docker the user $HOME (/home/vocalie) is not writable, so we must
+# redirect to /app/.assets/chatterbox/ before the imports happen.
+HF_ASSETS_DIR = os.environ.get("VOCALIE_HF_ASSETS_DIR", "/app/.assets/chatterbox")
+Path(HF_ASSETS_DIR).mkdir(parents=True, exist_ok=True)
+Path(HF_ASSETS_DIR, ".hf").mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("HF_HOME", str(Path(HF_ASSETS_DIR) / ".hf"))
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(Path(HF_ASSETS_DIR) / ".hf" / "hub"))
+os.environ.setdefault("TRANSFORMERS_CACHE", str(Path(HF_ASSETS_DIR) / ".hf" / "hub"))
+os.environ.setdefault("TORCH_HOME", str(Path(HF_ASSETS_DIR) / ".torch"))
 
 import numpy as np
 import soundfile as sf
@@ -101,11 +115,6 @@ def _synthesize_chunk(
 
 def main() -> int:
     try:
-        # Configure HF cache to a writable location inside the container.
-        # In Docker, $HOME=/home/vocalie but /home/vocalie/.cache is not
-        # writable by the vocalie user, so transformers warns and tries
-        # to fall back. Force everything to /app/.assets/chatterbox/.hf.
-        BaseSubprocessRunner.setup_hf_cache("/app/.assets/chatterbox")
         payload = _read_payload()
         text = str(payload.get("text") or "")
         out_path = payload.get("out_wav_path") or payload.get("out_path")
