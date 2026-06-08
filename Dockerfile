@@ -48,11 +48,16 @@ COPY requirements-chatterbox.txt ./
 # This is the slowest step of the build (~5-10 min, mostly torch wheel).
 ENV PIP_NO_BUILD_ISOLATION=1
 RUN python -m venv /opt/venvs/chatterbox
-RUN /opt/venvs/chatterbox/bin/pip install --no-cache-dir --quiet --upgrade pip setuptools wheel
+# Pin setuptools<81 so pkg_resources is still importable. The bundled
+# resemble-perth package's perth_net/__init__.py uses
+# `from pkg_resources import resource_filename`, which is removed in
+# setuptools 81+. Without this pin, every TTS job errors with
+# "TypeError: 'NoneType' object is not callable" from PerthImplicitWatermarker().
+RUN /opt/venvs/chatterbox/bin/pip install --no-cache-dir --quiet "setuptools<81" pip wheel
 RUN /opt/venvs/chatterbox/bin/pip install --no-cache-dir "numpy<1.26,>=1.24"
 RUN /opt/venvs/chatterbox/bin/pip install --no-cache-dir -r requirements-chatterbox.txt
 # Verify the install is importable before baking into the runtime image
-RUN /opt/venvs/chatterbox/bin/python -c "import chatterbox; print('chatterbox OK')"
+RUN /opt/venvs/chatterbox/bin/python -c "import chatterbox, perth; assert perth.PerthImplicitWatermarker is not None, 'perth watermarker not importable'; print('chatterbox OK')"
 
 # ─── Stage 4: Build Qwen3 venv (heavy: qwen-tts + torch) ────────────────
 FROM python:3.11-slim AS qwen3-venv-builder
@@ -60,7 +65,8 @@ FROM python:3.11-slim AS qwen3-venv-builder
 WORKDIR /build
 
 RUN python -m venv /opt/venvs/qwen3
-RUN /opt/venvs/qwen3/bin/pip install --no-cache-dir --quiet --upgrade pip setuptools wheel
+# Same setuptools<81 pin as chatterbox (any runtime pkg may use pkg_resources)
+RUN /opt/venvs/qwen3/bin/pip install --no-cache-dir --quiet "setuptools<81" pip wheel
 RUN /opt/venvs/qwen3/bin/pip install --no-cache-dir "qwen-tts==0.0.4" "torch" "torchaudio"
 RUN /opt/venvs/qwen3/bin/python -c "import qwen_tts; print('qwen3 OK')"
 
