@@ -79,6 +79,19 @@ class Qwen3Runner(BaseSubprocessRunner):
             if not has_cuda and not has_mps:
                 device = "cpu"
 
+        # Resolve the *actual* device that HF will land on, so the debug
+        # log tells the user whether they're getting CPU, MPS, or CUDA.
+        # On Apple Silicon hosts (M-series) this is typically "mps" and
+        # gives a meaningful speedup over CPU.
+        effective_device = device
+        if device == "auto":
+            if has_cuda:
+                effective_device = "cuda"
+            elif has_mps:
+                effective_device = "mps"
+            else:
+                effective_device = "cpu"
+
         model_kwargs = {"device_map": device}
         if dtype is not None:
             model_kwargs["dtype"] = dtype
@@ -89,7 +102,7 @@ class Qwen3Runner(BaseSubprocessRunner):
         self.log(
             f"start mode={mode} model_id={model_id} language={language} speaker={speaker} "
             f"x_vector_only={x_vector_only_mode} ref_audio={bool(voice_ref_path)} "
-            f"ref_text_len={len(str(ref_text))}",
+            f"ref_text_len={len(str(ref_text))} device={effective_device} dtype={dtype_value}",
             log_path=debug_log_path,
         )
 
