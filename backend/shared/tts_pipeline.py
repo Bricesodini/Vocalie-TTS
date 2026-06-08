@@ -24,7 +24,7 @@ from backend.shared.text_tools import (
 
 
 TARGET_SR = 24000
-MIN_WORDS_FOR_SYNTHESIS = 6  # Below this, text is padded via repetition to avoid model hallucination
+MIN_WORDS_FOR_SYNTHESIS = 3  # Below this, text is padded via repetition to avoid model hallucination
 MIN_EST_SECONDS_FOR_SYNTHESIS = 2.0  # Minimum estimated duration for stable synthesis
 
 
