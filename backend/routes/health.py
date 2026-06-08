@@ -29,12 +29,28 @@ def _check_dir_writable(path) -> bool:
 
 
 @router.get("/health", response_model=HealthResponse)
-def health() -> HealthResponse:
+async def health() -> HealthResponse:
+    import asyncio
     now = utc_now()
     uptime = int((now - START_TIME).total_seconds())
-    work_writable = _check_dir_writable(WORK_DIR)
-    output_writable = _check_dir_writable(OUTPUT_DIR)
+
+    # Disk checks are sync I/O. Offload to a thread so the event loop
+    # stays responsive (the menu-bar app polls this every 5s).
+    work_writable, output_writable = await asyncio.gather(
+        asyncio.to_thread(_check_dir_writable, WORK_DIR),
+        asyncio.to_thread(_check_dir_writable, OUTPUT_DIR),
+    )
     degraded = not work_writable or not output_writable
+
+    # `available_backend_ids()` is cached for 5s. The lifespan handler
+    # warms it in a background thread at startup, so this is a dict
+    # lookup in the steady state. But the dict-comprehension inside
+    # spawns subprocesses on cache miss, which is sync I/O — offload
+    # to a thread so we never block the event loop.
+    backends = None
+    if not degraded:
+        backends = await asyncio.to_thread(available_backend_ids)
+
     return HealthResponse(
         status="degraded" if degraded else "ok",
         api_version=API_VERSION,
@@ -42,7 +58,7 @@ def health() -> HealthResponse:
         timestamp=now,
         work_dir_writable=work_writable,
         output_dir_writable=output_writable,
-        backends=available_backend_ids() if not degraded else None,
+        backends=backends,
     )
 
 

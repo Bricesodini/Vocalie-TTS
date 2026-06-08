@@ -34,6 +34,21 @@ async def lifespan(_app: FastAPI):
         audiosr_service.log_audiosr_status()
     except Exception:
         pass
+    # Warm the backend-availability cache in a background thread so the
+    # first /v1/health doesn't block the event loop for ~8s (chatterbox
+    # import probe ≈ 3.9s, qwen_tts ≈ 4.7s, sequential). The cache TTL
+    # then keeps subsequent polls in single-digit milliseconds.
+    import asyncio
+    import threading
+    from tts_backends import available_backend_ids
+
+    def _warm_cache() -> None:
+        try:
+            available_backend_ids()
+        except Exception:
+            pass
+
+    threading.Thread(target=_warm_cache, daemon=True).start()
     yield
 
 

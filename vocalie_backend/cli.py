@@ -133,7 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_status)
 
     sp = sub.add_parser("health", help="ping /v1/health")
-    sp.add_argument("--timeout", type=float, default=2.0)
+    sp.add_argument("--timeout", type=float, default=10.0)
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_health)
 
