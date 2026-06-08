@@ -16,7 +16,12 @@ def is_local_request(request: Request) -> bool:
     host = getattr(getattr(request, "client", None), "host", None)
     if not host:
         return False
-    return host in LOCAL_HOSTS
+    if host in LOCAL_HOSTS:
+        return True
+    # IPv4-mapped IPv6 loopback (e.g. "::ffff:127.0.0.1") — strip the prefix
+    if host.startswith("::ffff:") and host[7:] in LOCAL_HOSTS:
+        return True
+    return False
 
 
 def _bearer_token(auth_header: str | None) -> Optional[str]:
@@ -98,6 +103,8 @@ def safe_join_under(root: Path, user_path: str) -> Path:
 def safe_filename(name: str) -> str:
     candidate = str(name or "").strip()
     if not candidate:
+        raise ValueError("invalid_name")
+    if "\x00" in candidate:
         raise ValueError("invalid_name")
     if candidate != Path(candidate).name:
         raise ValueError("invalid_name")

@@ -77,6 +77,128 @@
         }
       }
     },
+    "/v1/backends/{engine_id}/install": {
+      "post": {
+        "summary": "Install Backend",
+        "description": "Install a TTS backend by downloading its dependencies into a venv.",
+        "operationId": "install_backend_v1_backends__engine_id__install_post",
+        "parameters": [
+          {
+            "name": "engine_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Engine Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackendInstallResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/backends/{engine_id}/uninstall": {
+      "delete": {
+        "summary": "Uninstall Backend",
+        "description": "Uninstall a TTS backend by removing its venv.",
+        "operationId": "uninstall_backend_v1_backends__engine_id__uninstall_delete",
+        "parameters": [
+          {
+            "name": "engine_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Engine Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackendInstallResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/backends/{engine_id}/status": {
+      "get": {
+        "summary": "Backend Status Endpoint",
+        "description": "Get installation and availability status for a TTS backend.",
+        "operationId": "backend_status_endpoint_v1_backends__engine_id__status_get",
+        "parameters": [
+          {
+            "name": "engine_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Engine Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Backend Status Endpoint V1 Backends  Engine Id  Status Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tts/engines": {
       "get": {
         "summary": "List Engines",
@@ -853,6 +975,241 @@
           }
         }
       }
+    },
+    "/v1/refs": {
+      "get": {
+        "summary": "List References",
+        "description": "List voice reference files in the configured directory.",
+        "operationId": "list_references_v1_refs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/refs/dir": {
+      "put": {
+        "summary": "Set Ref Directory",
+        "description": "Set the voice reference directory. Creates it if it doesn't exist.",
+        "operationId": "set_ref_directory_v1_refs_dir_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefDirConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefDirConfig"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/refs/upload": {
+      "post": {
+        "summary": "Upload References",
+        "description": "Upload one or more audio files to the voice reference directory.",
+        "operationId": "upload_references_v1_refs_upload_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_references_v1_refs_upload_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/refs/{filename}": {
+      "delete": {
+        "summary": "Delete Reference",
+        "description": "Delete a voice reference file by name.",
+        "operationId": "delete_reference_v1_refs__filename__delete",
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Filename"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Reference V1 Refs  Filename  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/glossary": {
+      "get": {
+        "summary": "List Glossary",
+        "description": "List all glossary exception entries (word \u2192 pronunciation).",
+        "operationId": "list_glossary_v1_glossary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlossaryListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Upsert Glossary",
+        "description": "Add or update a glossary entry.",
+        "operationId": "upsert_glossary_v1_glossary_put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GlossaryUpsertRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlossaryEntry"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Glossary",
+        "description": "Remove a glossary entry.",
+        "operationId": "delete_glossary_v1_glossary_delete",
+        "parameters": [
+          {
+            "name": "word",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Word to delete",
+              "title": "Word"
+            },
+            "description": "Word to delete"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlossaryEntry"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1099,6 +1456,35 @@
         ],
         "title": "AudioSRStatus"
       },
+      "BackendInstallResponse": {
+        "properties": {
+          "engine_id": {
+            "type": "string",
+            "title": "Engine Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "logs": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "engine_id",
+          "status"
+        ],
+        "title": "BackendInstallResponse"
+      },
       "Body_enhance_audio_v1_audio_enhance_post": {
         "properties": {
           "file": {
@@ -1152,6 +1538,23 @@
           "file"
         ],
         "title": "Body_enhance_audio_v1_audio_enhance_post"
+      },
+      "Body_upload_references_v1_refs_upload_post": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string",
+              "format": "binary"
+            },
+            "type": "array",
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "Body_upload_references_v1_refs_upload_post"
       },
       "CapabilitiesResponse": {
         "properties": {
@@ -1646,6 +2049,56 @@
         },
         "type": "object",
         "title": "ExportOptions"
+      },
+      "GlossaryEntry": {
+        "properties": {
+          "word": {
+            "type": "string",
+            "title": "Word"
+          },
+          "pronunciation": {
+            "type": "string",
+            "title": "Pronunciation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "word",
+          "pronunciation"
+        ],
+        "title": "GlossaryEntry"
+      },
+      "GlossaryListResponse": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/GlossaryEntry"
+            },
+            "type": "array",
+            "title": "Entries",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "GlossaryListResponse"
+      },
+      "GlossaryUpsertRequest": {
+        "properties": {
+          "word": {
+            "type": "string",
+            "title": "Word"
+          },
+          "pronunciation": {
+            "type": "string",
+            "title": "Pronunciation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "word",
+          "pronunciation"
+        ],
+        "title": "GlossaryUpsertRequest"
       },
       "HTTPValidationError": {
         "properties": {
@@ -2272,6 +2725,40 @@
         "additionalProperties": true,
         "type": "object",
         "title": "PresetUpdateRequest"
+      },
+      "RefDirConfig": {
+        "properties": {
+          "directory": {
+            "type": "string",
+            "title": "Directory"
+          }
+        },
+        "type": "object",
+        "required": [
+          "directory"
+        ],
+        "title": "RefDirConfig"
+      },
+      "RefListResponse": {
+        "properties": {
+          "directory": {
+            "type": "string",
+            "title": "Directory"
+          },
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Files",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "directory"
+        ],
+        "title": "RefListResponse"
       },
       "TTSJobRequest": {
         "properties": {

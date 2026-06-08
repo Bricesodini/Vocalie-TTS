@@ -25,17 +25,29 @@ class TestConfigParsing:
         assert "127.0.0.1" in VOCALIE_ALLOWED_HOSTS
         assert "localhost" in VOCALIE_ALLOWED_HOSTS
 
-    def test_parse_bool_env_default_false(self):
-        from backend.config import VOCALIE_ENABLE_API_DOCS
-        assert VOCALIE_ENABLE_API_DOCS is False
+    def test_parse_bool_env_default_false(self, monkeypatch):
+        monkeypatch.delenv("VOCALIE_ENABLE_API_DOCS", raising=False)
+        import importlib
+        import backend.config
+        importlib.reload(backend.config)
+        assert backend.config.VOCALIE_ENABLE_API_DOCS is False
 
-    def test_parse_bool_env_default_trust_localhost(self):
-        from backend.config import VOCALIE_TRUST_LOCALHOST
-        assert VOCALIE_TRUST_LOCALHOST is False
+    def test_parse_bool_env_default_trust_localhost(self, monkeypatch):
+        # The conftest imports backend.app, which calls load_dotenv() and
+        # may set VOCALIE_TRUST_LOCALHOST in os.environ. Clear it so the
+        # config module falls back to the default.
+        monkeypatch.delenv("VOCALIE_TRUST_LOCALHOST", raising=False)
+        import importlib
+        import backend.config
+        importlib.reload(backend.config)
+        assert backend.config.VOCALIE_TRUST_LOCALHOST is False
 
-    def test_parse_bool_env_default_expose_system_info(self):
-        from backend.config import VOCALIE_EXPOSE_SYSTEM_INFO
-        assert VOCALIE_EXPOSE_SYSTEM_INFO is False
+    def test_parse_bool_env_default_expose_system_info(self, monkeypatch):
+        monkeypatch.delenv("VOCALIE_EXPOSE_SYSTEM_INFO", raising=False)
+        import importlib
+        import backend.config
+        importlib.reload(backend.config)
+        assert backend.config.VOCALIE_EXPOSE_SYSTEM_INFO is False
 
 
 class TestPathResolution:

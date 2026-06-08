@@ -33,6 +33,12 @@ def api_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
     monkeypatch.setenv("CHATTERBOX_REF_DIR", str(ref_dir))
     monkeypatch.setenv("VOCALIE_API_KEY", "test-api-key")
+    # Tests should exercise the API-key path, not the localhost-trust path.
+    # VOCALIE_TRUST_LOCALHOST is read at module import time, so patch the
+    # attribute directly (env monkeypatch alone won't override it).
+    monkeypatch.setattr(backend_config, "VOCALIE_TRUST_LOCALHOST", False, raising=False)
+    import backend.security as backend_security
+    monkeypatch.setattr(backend_security, "VOCALIE_TRUST_LOCALHOST", False, raising=False)
 
     monkeypatch.setattr(backend_config, "WORK_DIR", work_dir, raising=False)
     monkeypatch.setattr(backend_config, "OUTPUT_DIR", output_dir, raising=False)
