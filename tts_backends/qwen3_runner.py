@@ -61,8 +61,23 @@ class Qwen3Runner(BaseSubprocessRunner):
             raise RuntimeError(f"qwen_import_failed: {exc}") from exc
 
         device = params.get("device") or "auto"
-        dtype = self.resolve_dtype(torch, params.get("dtype"))
+        # Default to float16: 1.7B params @ fp32 = ~6.8 GB, which OOMs the
+        # 7.6 GB Docker Desktop container on macOS. fp16 = ~3.4 GB, leaves
+        # room for the code_predictor and inference activations.
+        dtype_value = params.get("dtype") or "float16"
+        dtype = self.resolve_dtype(torch, dtype_value)
         attn_implementation = params.get("attn_implementation")
+
+        # Hugging Face's device_map="auto" silently offloads the model to the
+        # meta device when no accelerator is visible (no CUDA, no MPS, no
+        # XPU). On Mac/amd64 hosts this manifests as
+        # "Tensor.item() cannot be called on meta tensors" at the first
+        # forward pass of generate(). Detect that and pin to CPU instead.
+        if device == "auto":
+            has_cuda = bool(getattr(torch, "cuda", None)) and torch.cuda.is_available()
+            has_mps = bool(getattr(getattr(torch, "backends", None), "mps", None)) and torch.backends.mps.is_available()
+            if not has_cuda and not has_mps:
+                device = "cpu"
 
         model_kwargs = {"device_map": device}
         if dtype is not None:
