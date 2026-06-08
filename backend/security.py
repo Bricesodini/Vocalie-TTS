@@ -60,6 +60,16 @@ def is_authorized(request: Request) -> bool:
 
 def require_authorized(request: Request) -> None:
     if not is_authorized(request):
+        client_host = getattr(getattr(request, "client", None), "host", None)
+        host_header = request.headers.get("host")
+        trust_local = backend_config.VOCALIE_TRUST_LOCALHOST
+        api_key_required = bool(required_api_key())
+        api_key_provided = bool(extract_api_key(request))
+        import logging
+        logging.getLogger("chatterbox_api").warning(
+            "auth_403 path=%s client=%s host_header=%s trust_localhost=%s api_key_required=%s api_key_provided=%s",
+            request.url.path, client_host, host_header, trust_local, api_key_required, api_key_provided,
+        )
         raise HTTPException(status_code=403, detail="forbidden")
 
 
