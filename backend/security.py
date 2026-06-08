@@ -49,6 +49,17 @@ def required_api_key() -> Optional[str]:
 def is_authorized(request: Request) -> bool:
     if backend_config.VOCALIE_TRUST_LOCALHOST and is_local_request(request):
         return True
+    # In a co-located frontend/backend setup (e.g. Docker compose with both
+    # services in the same container, or a sidecar on the same host), Next.js
+    # rewrites forward the browser request with the same TCP peer — so
+    # request.client.host is the browser's IP, not 127.0.0.1. The proxy
+    # sets Host: 127.0.0.1:8018 (the internal backend address), which is
+    # unforgeable from outside the container because port 8018 is not
+    # exposed. Trust those requests too.
+    if backend_config.VOCALIE_TRUST_LOCALHOST:
+        host_header = (request.headers.get("host") or "").split(":")[0]
+        if host_header in ("127.0.0.1", "localhost", "::1"):
+            return True
     required = required_api_key()
     if not required:
         return False
