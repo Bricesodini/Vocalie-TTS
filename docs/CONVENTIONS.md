@@ -14,7 +14,6 @@
 - `backend/shared/` contains canonical shared modules (`refs`, `text_tools`, `audio_defaults`, `output_paths`, `session_manager`, `tts_pipeline`). Root-level re-export shims preserve backward compatibility.
 - Root shim files (`tts_pipeline.py`, `text_tools.py`, `audio_defaults.py`, `output_paths.py`, `refs.py`, `session_manager.py`) re-export from `backend/shared/`. They are backward-compatibility surfaces and must not absorb new product scope.
 - `frontend/src/` hosts production UI concerns only.
-- `ui_gradio/` is an optional debug cockpit, not a production surface. It depends on the canonical API and must not receive new product responsibilities.
 - `scripts/` contains operational/developer automation; script behavior must reference canonical env policy.
 - `tests/` mirrors risk areas (API/security/rate-limit/state/backends) and remains colocated by domain responsibility.
 - `docs/` contains living source-of-truth documentation.
@@ -44,7 +43,7 @@ Examples as plain text paths:
 - `backend/schemas/*` must remain domain contract definitions with no route-side effects.
 - `backend/shared/*` contains shared domain modules (text processing, path helpers, session management, TTS pipeline). Root-level shims re-export these for backward compatibility.
 - Frontend `lib/` is API/types/util boundary; page-level components should not duplicate request contract types.
-- No-crossing rule: new backend business logic must go into `backend/` modules, not into root shims or `ui_gradio/`.
+- No-crossing rule: new backend business logic must go into `backend/` modules, not into root shims.
 - No-crossing rule: `backend/` modules must import from `backend.shared` rather than from root-level modules.
 
 ### 4) Configuration
@@ -71,7 +70,7 @@ Examples as plain text paths:
 
 ## Drift checklist (to use in reviews)
 
-- Does the change keep business logic out of root shims and `ui_gradio/` (backward-compat only)?
+- Does the change keep business logic out of root shims (backward-compat only)?
 - Are new APIs under `/v1/*` and consistent with existing route conventions?
 - Are engine IDs using canonical names (not introducing new ad-hoc aliases)? Are they declared via `engine_variants()` on the backend class?
 - Are legacy compatibility mappings localized rather than spread?

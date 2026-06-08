@@ -5,7 +5,6 @@
 Local-first TTS production stack with:
 - FastAPI backend (`backend/`) — canonical runtime
 - Next.js production frontend (`frontend/src/`)
-- Optional debug cockpit (`ui_gradio/cockpit.py`) — not required for normal operation
 
 ## Current scope + non-goals
 
@@ -26,7 +25,6 @@ Key invariants include auth on protected routes, input/output bounds, rate-limit
 - TTS backends: `tts_backends/` (auto-registered via `__init_subclass__`)
 - Production UI: `frontend/src/` (Next.js)
 - Shared modules: `backend/shared/` (canonical location, re-exported via root shims)
-- Debug cockpit: `ui_gradio/` (optional, not a production surface)
 
 ## Commands
 

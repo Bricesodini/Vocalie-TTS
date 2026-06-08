@@ -16,12 +16,11 @@
 - Tradeoffs: adds documentation gate overhead.
 - Evidence links: `reports/scope-freeze-20260311-2211.md`, `.github/workflows/ci.yml`
 
-## DEC-003 — Production UI is Next.js; Gradio is optional debug cockpit
-- Status: Accepted (updated)
-- Date: 2026-03-12
-- Decision: frontend production flows are carried by `frontend/src`. The Gradio cockpit (`ui_gradio/`) is an optional debug tool, not a production surface, and is not required for normal operation.
-- Why: aligns architecture with current operational model; removes dual-surface confusion.
-- Tradeoffs: `ui_gradio/` still depends on `gradio` in requirements but is decoupled from production flow.
+## DEC-003 — Production UI is Next.js; Gradio cockpit removed
+- Status: Superseded
+- Date: 2026-03-12 (updated 2026-06-08)
+- Decision: frontend production flows are carried by `frontend/src`. The Gradio cockpit (`ui_gradio/`) was removed — it was no longer used and pulled in a `gradio` dependency for no operational benefit.
+- Why: removes dead surface and its transitive dependency.
 - Evidence links: `README.md`, `docs/CONVENTIONS.md`
 
 ## DEC-004 — Canonical environment policy is centralized

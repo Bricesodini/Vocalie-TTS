@@ -40,8 +40,6 @@ Vocalie-TTS s'adresse aux createurs audio/video qui recherchent :
 
 L'architecture est API-first : le backend FastAPI est la source de verite, le frontend Next.js est le client de production.
 
-Une interface de debug optionnelle (`ui_gradio/cockpit.py`) reste disponible pour le diagnostic du backend, mais n'est pas une surface de production et n'est pas requise pour le fonctionnement normal.
-
 ---
 
 ## Objectifs

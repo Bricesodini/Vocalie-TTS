@@ -40,5 +40,4 @@ Vue synthetique des frontieres de Chatterbox pour auditabilite.
 ## Hors frontiere explicite (non-goals)
 
 - Exposition publique directe de l'API sans reverse proxy et hardening.
-- `ui_gradio/`: debug cockpit optionnel (pas une surface de production).
 - Comportements implicites non demandes (rewrite texte, post-traitement auto).
