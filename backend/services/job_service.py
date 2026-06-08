@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -9,6 +10,8 @@ from typing import Any, Dict, Optional
 from backend.config import MAX_CONCURRENT_JOBS, OUTPUT_DIR
 from backend.services import asset_service
 from backend.services.tts_service import run_tts_job
+
+logger = logging.getLogger(__name__)
 
 
 class JobStore:
@@ -86,6 +89,11 @@ class JobStore:
         if job and job.get("status") == "canceled":
             return
         self._update_job(job_id, status="running", started_at=datetime.now(timezone.utc))
+        text_val = payload.get("text", "")
+        engine_val = payload.get("engine", "")
+        voice_val = payload.get("voice")
+        logger.info("tts_job_start job=%s engine=%s voice=%s text_len=%d text_40=%r",
+                    job_id, engine_val, voice_val, len(text_val), text_val[:40])
         try:
             result = run_tts_job(
                 job_id=job_id,

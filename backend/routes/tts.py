@@ -157,6 +157,8 @@ def create_job(http_request: Request, request: TTSJobRequest) -> JobCreateRespon
     engine_id = request.engine_id or request.engine
     if not engine_id:
         raise HTTPException(status_code=400, detail="engine_required")
+    LOGGER.warning("tts_job_request engine=%s text=%r text_source=%s text_raw=%r text_snapshot=%r",
+               engine_id, request.text, request.text_source, (request.text_raw or "")[:80], (request.text_snapshot or "")[:80])
     engine_id = canonical_engine_id(engine_id)
     meta = _engine_meta(engine_id)
     if meta is None:

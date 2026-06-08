@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
 from contextlib import asynccontextmanager
 import logging
+
+from dotenv import load_dotenv
+
+# Load .env from project root before any config imports
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +20,7 @@ from backend.config import (
     VOCALIE_ENABLE_API_DOCS,
     WORK_DIR,
 )
-from backend.routes import assets, audio, chunks, health, info, jobs, prep, presets, tts
+from backend.routes import assets, audio, backends, chunks, glossary, health, info, jobs, prep, presets, refs, tts
 from backend.security import require_authorized
 from backend.services.work_service import clean_work_dir
 
@@ -68,6 +74,7 @@ async def add_version_header(request: Request, call_next):
 
 app.include_router(health.router)
 app.include_router(info.router, dependencies=[Depends(require_authorized)])
+app.include_router(backends.router, dependencies=[Depends(require_authorized)])
 app.include_router(tts.router, dependencies=[Depends(require_authorized)])
 app.include_router(presets.router, dependencies=[Depends(require_authorized)])
 app.include_router(jobs.router, dependencies=[Depends(require_authorized)])
@@ -75,3 +82,5 @@ app.include_router(assets.router, dependencies=[Depends(require_authorized)])
 app.include_router(prep.router, dependencies=[Depends(require_authorized)])
 app.include_router(chunks.router, dependencies=[Depends(require_authorized)])
 app.include_router(audio.router, dependencies=[Depends(require_authorized)])
+app.include_router(refs.router, dependencies=[Depends(require_authorized)])
+app.include_router(glossary.router, dependencies=[Depends(require_authorized)])

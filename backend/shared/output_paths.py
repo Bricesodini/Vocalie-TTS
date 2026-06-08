@@ -49,12 +49,11 @@ def get_engine_slug(engine_id: str, engine_meta: dict | None = None) -> str:
         if mode:
             return slugify(f"chatterbox_{mode}", fallback="chatterbox")
         return "chatterbox"
-    if engine_id == "xtts":
-        return "xtts_v2"
-    if engine_id == "piper":
-        return "piper"
-    if engine_id == "bark":
-        return "bark"
+    if engine_id == "cosyvoice":
+        mode = engine_meta.get("cosyvoice_mode")
+        if mode:
+            return slugify(f"cosyvoice_{mode}", fallback="cosyvoice")
+        return "cosyvoice"
     if engine_id == "qwen3":
         mode = engine_meta.get("qwen3_mode")
         if mode:

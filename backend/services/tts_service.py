@@ -93,13 +93,6 @@ def run_tts_job(
         raise BackendUnavailableError(f"Backend indisponible: {engine}. {reason}")
 
     backend_id = backend.id
-    if backend_id == "bark":
-        direction_enabled = False
-    if backend is None:
-        raise BackendUnavailableError(f"Backend introuvable: {engine}")
-    if not backend.is_available():
-        reason = backend.unavailable_reason() or "Dépendances manquantes."
-        raise BackendUnavailableError(f"Backend indisponible: {engine}. {reason}")
 
     progress_cb(0.05)
 
@@ -155,7 +148,7 @@ def run_tts_job(
     raw_path.parent.mkdir(parents=True, exist_ok=True)
     os.replace(result.out_path, raw_path)
 
-    engine_slug = get_engine_slug(backend_id, {"chatterbox_mode": chatterbox_mode} if chatterbox_mode else engine_params)
+    engine_slug = get_engine_slug(backend_id, engine_params)
     artifacts = {
         "raw_global": str(Path("takes") / "global" / raw_path.name),
     }

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterable, List
 
 
-DEFAULT_REF_DIR = Path(__file__).resolve().parent / "Ref_audio"
+DEFAULT_REF_DIR = Path(__file__).resolve().parents[2] / "Ref_audio"
 ALLOWED_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aiff", ".flac"}
 
 

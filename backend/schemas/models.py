@@ -369,3 +369,36 @@ class AssetMetaResponse(BaseModel):
     model: Optional[str] = None
     created_at: Optional[datetime] = None
     job_id: Optional[str] = None
+
+
+class BackendInstallResponse(BaseModel):
+    engine_id: str
+    status: str
+    logs: Optional[str] = None
+
+
+class RefListResponse(BaseModel):
+    directory: str
+    files: List[str] = []
+
+
+class RefDirConfig(BaseModel):
+    directory: str
+
+
+class GlossaryEntry(BaseModel):
+    word: str
+    pronunciation: str
+
+
+class GlossaryListResponse(BaseModel):
+    entries: List[GlossaryEntry] = []
+
+
+class GlossaryUpsertRequest(BaseModel):
+    word: str
+    pronunciation: str
+
+
+class GlossaryDeleteRequest(BaseModel):
+    word: str

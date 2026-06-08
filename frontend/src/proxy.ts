@@ -1,22 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
 
 /**
- * CSP proxy — generates per-request nonce for script-src.
+ * Next.js Proxy — handles CSP headers and API auth.
  *
- * Dev mode: allows 'unsafe-inline' + 'unsafe-eval' (Turbopack HMR needs both).
- * Prod mode: strict nonce-based CSP (Next.js extracts the nonce from the
- * Content-Security-Policy header and applies it to inline scripts).
+ * 1. CSP: sets per-request security headers.
+ *    Dev mode:  allows 'unsafe-inline' + 'unsafe-eval' (Turbopack HMR).
+ *    Prod mode: 'unsafe-inline' only (RSC inline scripts need it).
  *
- * Connect-src includes the backend ports so API fetches work through the proxy.
+ * 2. API Auth: injects VOCALIE_API_KEY as x-api-key header on /v1/*
+ *    requests so the browser never sees the key.
  */
 
-export function proxy(request: NextRequest) {
-  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
-  const isDev = process.env.NODE_ENV === "development";
+function generateNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(18));
+  return btoa(String.fromCharCode(...bytes));
+}
 
+export function proxy(request: NextRequest) {
+  const nonce = generateNonce();
+  const isDev = process.env.NODE_ENV === "development";
+  const apiKey = process.env.VOCALIE_API_KEY || "";
+
+  // ── API requests: inject auth header ──
+  if (request.nextUrl.pathname.startsWith("/v1/")) {
+    const requestHeaders = new Headers(request.headers);
+    if (apiKey) {
+      requestHeaders.set("x-api-key", apiKey);
+    }
+    return NextResponse.next({
+      request: { headers: requestHeaders },
+    });
+  }
+
+  // ── Page requests: CSP + security headers ──
   const scriptSrc = isDev
     ? "'self' 'unsafe-inline' 'unsafe-eval'"
-    : `'self' 'nonce-${nonce}'`;
+    : "'self' 'unsafe-inline'";
 
   const csp = [
     "default-src 'self'",
@@ -42,7 +61,10 @@ export function proxy(request: NextRequest) {
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("X-Frame-Options", "DENY");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
-  response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  response.headers.set(
+    "Permissions-Policy",
+    "camera=(), microphone=(), geolocation=()"
+  );
 
   if (!isDev) {
     response.headers.set(
@@ -55,5 +77,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
