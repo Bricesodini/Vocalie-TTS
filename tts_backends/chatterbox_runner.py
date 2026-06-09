@@ -14,9 +14,9 @@ from typing import Any
 # ── HF cache MUST be configured BEFORE importing any of the heavy deps ──
 # chatterbox_impl imports huggingface_hub and torch at module load time,
 # and those modules read HF_HOME / HUGGINGFACE_HUB_CACHE at import.
-# In Docker the user $HOME (/home/vocalie) is not writable, so we must
-# redirect to /app/.assets/chatterbox/ before the imports happen.
-HF_ASSETS_DIR = os.environ.get("VOCALIE_HF_ASSETS_DIR", "/app/.assets/chatterbox")
+# Fallback to a local project dir so it works outside Docker (macOS, dev).
+_DEFAULT_ASSETS = str(Path(__file__).resolve().parents[1] / ".assets" / "chatterbox")
+HF_ASSETS_DIR = os.environ.get("VOCALIE_HF_ASSETS_DIR", _DEFAULT_ASSETS)
 Path(HF_ASSETS_DIR).mkdir(parents=True, exist_ok=True)
 Path(HF_ASSETS_DIR, ".hf").mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("HF_HOME", str(Path(HF_ASSETS_DIR) / ".hf"))
