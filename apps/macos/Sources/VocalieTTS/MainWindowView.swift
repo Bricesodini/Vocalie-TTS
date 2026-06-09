@@ -185,11 +185,9 @@ struct VocalieWebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        // Allow mixed content: the page is served over HTTP from
-        // localhost. Modern macOS WebViews default to blocking
-        // mixed content, but the user explicitly trusts the local
-        // backend (it's their own machine).
-        config.preferences.setValue(true, forKey: "allowMixedContent")
+        // The backend serves HTTP on localhost. WKWebView needs
+        // no extra config for that — Apple's ATS only blocks HTTPS
+        // *upgrade* on non-localhost origins.
         let view = WKWebView(frame: .zero, configuration: config)
         view.allowsBackForwardNavigationGestures = true
         view.load(URLRequest(url: url))
