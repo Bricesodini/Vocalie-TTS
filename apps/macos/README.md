@@ -1,32 +1,34 @@
-# Vocalie-TTS — macOS Menu Bar App
+# Vocalie-TTS — macOS App
 
-A lightweight SwiftUI app that lives in the macOS menu bar and
-controls the Vocalie-TTS Python backend.
+A lightweight SwiftUI app that controls the Vocalie-TTS Python
+backend and embeds the Next.js UI in the same window.
 
 The app is intentionally a thin shell: all the real work (start
 uvicorn, hit `/v1/health`, write PID files) is done by the
 `vocalie-backend` Python CLI. The Swift app just calls that CLI
-as a subprocess and reflects its JSON output in a menu-bar icon.
+as a subprocess, decodes the JSON state, and renders the UI in
+a `WKWebView` against the backend's HTTP root.
 
-## Architecture
+The user used to want a MenuBarExtra-only accessory app, but
+asked for a regular window with a Dock icon because they had
+too many menu-bar icons already. So the new shape is:
 
 ```
-+-----------------------------+
-| Vocalie-TTS.app             |    SwiftUI MenuBarExtra
-|   BackendManager.swift  <---+---- subprocess ----+
-|   HealthMonitor.swift   <---+                    v
-|   MenuBarController.swift    |       +-------------------------+
-|                             |       | vocalie-backend CLI     |
-+-----------------------------+       |   start / stop / status |
-                                      |   install / doctor      |
-                                      +-----------+-------------+
-                                                  |
-                                                  v
-                                      +-------------------------+
-                                      | uvicorn (Python)        |
-                                      | backend.app:app         |
-                                      | http://127.0.0.1:8018   |
-                                      +-------------------------+
++-----------------------------------+
+| Vocalie-TTS.app                   |    SwiftUI WindowGroup
+|   BackendManager.swift  <---------+---- subprocess ----+
+|   HealthMonitor.swift  <----------+                    v
+|   AppController.swift             |        +-------------------------+
+|   MainWindowView.swift  ----------+        | vocalie-backend CLI     |
+|     (StatusHeader + WKWebView)    |        |   start / stop / status |
++-----------------------------------+        |   install / doctor      |
+        |                                   +-----------+-------------+
+        v                                               |
+   http://127.0.0.1:8018                                v
+        |                                   +-------------------------+
+        +-------> uvicorn (Python) <-------+ backend.app:app         |
+                          |                 | http://127.0.0.1:8018   |
+                          +-> serves UI     +-------------------------+
 ```
 
 ## Build
@@ -63,11 +65,10 @@ cd apps/macos
 swift run                 # debug build, console attached
 ```
 
-The app shows up in the menu bar as a speaker icon. Click it to:
-- see the current backend state
-- start / stop / restart the backend
-- open the UI in your browser (`http://localhost:3018`)
-- open the Settings window
+A window opens with the status header on top (state dot, PID,
+port, Start/Stop/Restart buttons) and the Next.js UI rendered in
+a `WKWebView` below. Closing the window does NOT quit the app
+(it stays alive in the Dock); use Cmd-Q to actually exit.
 
 ## Prerequisites
 
@@ -94,7 +95,8 @@ apps/macos/
 ├── README.md                           this file
 ├── Sources/VocalieTTS/
 │   ├── VocalieApp.swift                @main entry, NSApp setup
-│   ├── MenuBarController.swift         MenuBarExtra + Settings scenes
+│   ├── AppController.swift             state + start/stop/restart
+│   ├── MainWindowView.swift            status header + embedded WKWebView
 │   ├── BackendManager.swift            subprocess wrapper around vocalie-backend
 │   ├── BackendState.swift              Codable mirror of Python BackendState
 │   ├── HealthMonitor.swift             timer-driven /v1/health poll
