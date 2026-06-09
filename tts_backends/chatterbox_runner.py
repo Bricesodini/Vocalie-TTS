@@ -115,6 +115,7 @@ def _synthesize_chunk(
 
 def main() -> int:
     try:
+        print("[chatterbox_runner] start", file=sys.stderr, flush=True)
         payload = _read_payload()
         text = str(payload.get("text") or "")
         out_path = payload.get("out_wav_path") or payload.get("out_path")
@@ -129,8 +130,11 @@ def main() -> int:
         temperature = float(payload.get("temperature", 0.5))
         repetition_penalty = float(payload.get("repetition_penalty", 1.35))
 
+        print(f"[chatterbox_runner] mode={tts_model_mode} text_len={len(text)} out={out_path}", file=sys.stderr, flush=True)
         with contextlib.redirect_stdout(sys.stderr):
+            print("[chatterbox_runner] loading engine...", file=sys.stderr, flush=True)
             engine = ChatterboxEngine()
+            print("[chatterbox_runner] engine loaded, synthesizing...", file=sys.stderr, flush=True)
             audio, sr, meta = _synthesize_chunk(
                 engine,
                 text,
@@ -146,6 +150,7 @@ def main() -> int:
         out_path = str(Path(out_path).expanduser().resolve())
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         sf.write(out_path, audio, sr)
+        print(f"[chatterbox_runner] done wav={out_path}", file=sys.stderr, flush=True)
         _write_response(
             {
                 "ok": True,

@@ -16,7 +16,7 @@ from .catalog import CHATTERBOX_LANGUAGE_MAP
 class ChatterboxBackend(TTSBackend, SubprocessBackendMixin):
     runner_module = "chatterbox_runner"
     runner_venv = "chatterbox"
-    default_timeout = 180.0
+    default_timeout = 600.0  # multilang cold-start on CPU/MPS can exceed 180s
 
     id = "chatterbox"
     display_name = "Chatterbox (stable long-form)"
